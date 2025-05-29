@@ -2,20 +2,20 @@ import re
 import networkx as nx
 
 def parse_graph_expression(expr: str) -> nx.Graph:
-    expr = expr.replace(" ", "")
+    expr = expr.replace(" ", "")  # remove spaces
     G = nx.Graph()
 
-    match = re.match(r"(\d+)\*(.+)", expr)
+    match = re.match(r"(\d+)\*(.*?)", expr)
     if not match:
-        raise ValueError("Expression must be in the form like 1*(2+3+4) or 1*(2+3+...+10)")
+        raise ValueError("Expression must be in the form like '1*(2+3+4)' or '1*(2+3+...+10)'")
 
     center = match.group(1)
     leaf_expr = match.group(2)
 
     if "..." in leaf_expr:
-        parts = leaf_expr.split("+")
+        parts = leaf_expr.split("...")
         start = int(parts[0])
-        end = int(parts[-1])
+        end = int(parts[1].split("+")[-1])  # Handles cases like ...+10
         leaves = [str(i) for i in range(start, end + 1)]
     else:
         leaves = leaf_expr.split("+")
