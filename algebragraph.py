@@ -7,7 +7,7 @@ st.title("Algebraic Graph Visualizer")
 
 expr = st.text_input("Enter a symbolic expression like 1*(2+3+...+10)")
 
-def parse_expression(expr):
+def parse_graph_expression(expr):
     try:
         center, rest = expr.split('*')
         center = center.strip()
