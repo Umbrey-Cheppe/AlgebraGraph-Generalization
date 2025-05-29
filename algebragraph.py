@@ -19,7 +19,7 @@ def parse_graph_expression(expr):
         return []
 
 if st.button("Draw Graph"):
-    edges = parse_expression(expr)
+    edges = parse_graph_expression(expr)
     if not edges:
         st.error("Invalid expression format. Use format 1*(2+3+4)")
     else:
