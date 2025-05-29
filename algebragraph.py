@@ -1,32 +1,30 @@
-import re
+import streamlit as st
+import matplotlib.pyplot as plt
 import networkx as nx
 
-def parse_graph_expression(expr: str) -> nx.Graph:
-    expr = expr.replace(" ", "")
-    G = nx.Graph()
+st.set_page_config(page_title="Algebraic Graph Visualizer", layout="centered")
+st.title("Algebraic Graph Visualizer")
 
-    # Match pattern like 1*(2+3+...+10)
-    match = re.match(r"(\d+)\*(.*?)", expr)
-    if not match:
-        raise ValueError("Expression must be in the form like '1*(2+3+4)' or '1*(2+3+...+10)'")
+expr = st.text_input("Enter a symbolic expression like 1*(2+3+...+10)")
 
-    center = match.group(1)
-    leaf_expr = match.group(2)
+def parse_expression(expr):
+    try:
+        center, rest = expr.split('*')
+        center = center.strip()
+        rest = rest.strip('()+')
+        nodes = rest.split('+')
+        edges = [(center, node) for node in nodes]
+        return edges
+    except:
+        return []
 
-    leaves = []
-    if "..." in leaf_expr:
-        # Handle symbolic summation
-        parts = leaf_expr.split("+")
-        start = int(parts[0])
-        end = int(parts[-1])
-        leaves = [str(i) for i in range(start, end + 1)]
+if st.button("Draw Graph"):
+    edges = parse_expression(expr)
+    if not edges:
+        st.error("Invalid expression format. Use format 1*(2+3+4)")
     else:
-        leaves = leaf_expr.split("+")
-
-    G.add_node(center)
-    for leaf in leaves:
-        G.add_node(leaf)
-        G.add_edge(center, leaf)
-
-    return G
-  
+        G = nx.Graph()
+        G.add_edges_from(edges)
+        pos = nx.spring_layout(G)
+        nx.draw(G, pos, with_labels=True, node_color="lightblue", font_weight="bold")
+        st.pyplot(plt)
