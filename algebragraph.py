@@ -10,17 +10,18 @@ expr = st.text_input("Graph Expression:", "1*(2+3+...+10)")
 
 def parse_graph_expression(expr):
     try:
-        center, rest = expr.split("*", 1)
+        center, rest = expr.split("*")
         center = center.strip()
-        rest = rest.strip(" ()")
+        rest = rest.strip("()+ ")
 
-        # Handle range expansion like 2+3+...+10
+        # If range style (e.g., 2+3+...+10)
         if "..." in rest:
             parts = rest.split("...")
-            start = int(parts[0].split("+")[-1].strip())
-            end = int(parts[1].strip())
+            start = int(parts[0].split("+")[0])
+            end = int(parts[1])
             nodes = list(range(start, end + 1))
         else:
+            # Direct node list (e.g., 2+3+4)
             nodes = [int(x.strip()) for x in rest.split("+")]
 
         edges = [(int(center), node) for node in nodes]
