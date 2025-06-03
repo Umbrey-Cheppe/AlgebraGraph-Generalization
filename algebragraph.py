@@ -10,7 +10,7 @@ st.markdown("Enter a symbolic expression like `1*(2+3+...+10)` or `x_1*(x_2+x_3)
 
 # --- User input ---
 expr = st.text_input("Graph Expression:", "1*(2+3+...+10)")
-
+import re
 def parse_graph_expression(expr):
     """
     Returns a list of (center, leaf) pairs for expressions like:
