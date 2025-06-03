@@ -11,53 +11,48 @@ st.markdown("Enter a symbolic expression like `1*(2+3+...+10)` or `x_1*(x_2+x_3)
 # --- User input ---
 expr = st.text_input("Graph Expression:", "1*(2+3+...+10)")
 
-# --- Parsing logic ---
 def parse_graph_expression(expr):
     """
     Returns a list of (center, leaf) pairs for expressions like:
-      1) Range:        "1*(2+3+...+10)"
-      2) Direct list:  "1*(2+3+4)"
-      3) Alphanumeric with underscores: "x_1*(x_2+x_3+...+x_n)"
+      1) Numeric-range star:    "1*(2+3+...+10)"
+      2) Direct numeric list:   "1*(2+3+4)"
+      3) Alphanumeric star:     "A*(B+C+D)"  or  "Node1*(LeafA+LeafB)"
+      Otherwise returns [] if the format does not match.
     """
     expr = expr.strip()
 
-    # Pattern 1: Numeric range (e.g., 1*(2+...+10) or x_1*(2+...+10))
-    # Matches center_label*(start_num+...+end_num)
-    # Allows alphanumeric and underscores for the center label.
-    # Corrected: Replaced '' with escaped parentheses '\(' and '\)'
-    range_pattern = r"^([A-Za-z0-9_]+)\*\(\s*(\d+)\s*\+\s*\.\.\.\s*(\d+)\s*\)$"
-    match = re.match(range_pattern, expr)
-    if match:
-        center = match.group(1)
-        start = int(match.group(2))
-        end = int(match.group(3))
-        # Ensure the range is valid (start must be less than or equal to end)
-        if start > end:
-            return []
-        return [(center, str(i)) for i in range(start, end + 1)]
+    # 1) Numeric-range star pattern: 1*(2+3+...+10)
+    # Corrected: Replaced '' with '\(' and '\)' for literal parentheses.
+    range_pattern = r"^([A-Za-z0-9]+)\*\(\s*(\d+)\+(\d+)\.\.\.(\d+)\s*\)$"
+    m = re.match(range_pattern, expr)
+    if m:
+        center_label = m.group(1)           # e.g. "1" or "Node42"
+        start_int    = int(m.group(2))      # e.g. 2
+        end_int      = int(m.group(4))      # e.g. 10
+        # Build leaves 2,3,...,10
+        return [(center_label, str(i)) for i in range(start_int, end_int + 1)]
 
-    # Pattern 2: Direct numeric list (e.g., 1*(2+3+4))
-    # Matches numeric_center_label*(num1+num2+...)
-    # Corrected: Replaced '' with escaped parentheses '\(' and '\)'
-    numeric_list_pattern = r"^(\d+)\*\(\s*(\d+(?:\s*\+\s*\d+)*)\s*\)$"
-    match = re.match(numeric_list_pattern, expr)
-    if match:
-        center = match.group(1)
-        leaves = [x.strip() for x in match.group(2).split("+")]
-        return [(center, leaf) for leaf in leaves]
+    # 2) Direct numeric list: 1*(2+3+4)
+    # Corrected: Replaced '' with '\(' and '\)' for literal parentheses.
+    direct_numeric_pattern = r"^(\d+)\*\(\s*(\d+(?:\s*\+\s*\d+)*)\s*\)$"
+    m2 = re.match(direct_numeric_pattern, expr)
+    if m2:
+        center_label = m2.group(1)           # e.g. "1"
+        leaves_part  = m2.group(2)           # e.g. "2+3+4"
+        leaf_labels  = [tok.strip() for tok in leaves_part.split("+")]
+        return [(center_label, leaf) for leaf in leaf_labels]
 
-    # Pattern 3: Alphanumeric/underscore labels (e.g., A*(B+C), x_1*(x_2+x_3))
-    # Matches alphanumeric_center_label*(label1+label2+...)
-    # Allows alphanumeric and underscores for both center and leaf labels.
-    # Corrected: Replaced '' with escaped parentheses '\(' and '\)'
-    label_pattern = r"^([A-Za-z0-9_]+)\*\(\s*([A-Za-z0-9_]+(?:\s*\+\s*[A-Za-z0-9_]+)*)\s*\)$"
-    match = re.match(label_pattern, expr)
-    if match:
-        center = match.group(1)
-        leaves = [x.strip() for x in match.group(2).split("+")]
-        return [(center, leaf) for leaf in leaves]
+    # 3) Generic-label star: A*(B+C+D)
+    # Corrected: Replaced '' with '\(' and '\)' for literal parentheses.
+    generic_pattern = r"^([A-Za-z0-9]+)\*\(\s*([A-Za-z0-9]+(?:\s*\+\s*[A-Za-z0-9]+)*)\s*\)$"
+    m3 = re.match(generic_pattern, expr)
+    if m3:
+        center_label = m3.group(1)           # e.g. "A" or "Node1"
+        leaves_part  = m3.group(2)           # e.g. "B+C+D" or "Leaf1+Leaf2"
+        leaf_labels  = [tok.strip() for tok in leaves_part.split("+")]
+        return [(center_label, leaf) for leaf in leaf_labels]
 
-    # If no pattern matches, return an empty list
+    # If none of the above patterns matched, return empty
     return []
 
 # --- Draw graph ---
