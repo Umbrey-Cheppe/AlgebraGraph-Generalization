@@ -13,46 +13,49 @@ import re
 def parse_graph_expression(expr):
     """
     Returns a list of (center, leaf) pairs for expressions like:
-      1) Numeric-range star:    "1*(2+3+...+10)"
-      2) Direct numeric list:   "1*(2+3+4)"
-      3) Alphanumeric star:     "A*(B+C+D)"  or  "Node1*(LeafA+LeafB)"
-      Otherwise returns [] if the format does not match.
+      1) Range:        "1*(2+3+...+10)"
+      2) Direct list:  "1*(2+3+4)"
+      3) Alphanumeric with _: "x_1*(x_2+x_3+...+x_n)"
     """
     expr = expr.strip()
 
-    # 1) Numeric-range star pattern: 1*(2+3+...+10)
-    # Corrected: Replaced '' with '\(' and '\)' for literal parentheses.
-    range_pattern = r"^([A-Za-z0-9]+)\*\(\s*(\d+)\+(\d+)\.\.\.(\d+)\s*\)$"
+    # Pattern 1: Numeric range (e.g., 1*(2+3+...+10) or x_1*(2+3+...+10))
+    # Allows alphanumeric characters and underscores for the center label.
+    range_pattern = r"^([A-Za-z0-9_]+)\*\(\s*(\d+)\+\d+\.\.\.(\d+)\s*\)$"
     m = re.match(range_pattern, expr)
     if m:
-        center_label = m.group(1)           # e.g. "1" or "Node42"
-        start_int    = int(m.group(2))      # e.g. 2
-        end_int      = int(m.group(4))      # e.g. 10
-        # Build leaves 2,3,...,10
+        center_label = m.group(1)
+        start_int    = int(m.group(2))
+        end_int      = int(m.group(3))
+        # Ensure the range is valid (start <= end)
+        if start_int > end_int:
+            return []
         return [(center_label, str(i)) for i in range(start_int, end_int + 1)]
 
-    # 2) Direct numeric list: 1*(2+3+4)
-    # Corrected: Replaced '' with '\(' and '\)' for literal parentheses.
-    direct_numeric_pattern = r"^(\d+)\*\(\s*(\d+(?:\s*\+\s*\d+)*)\s*\)$"
-    m2 = re.match(direct_numeric_pattern, expr)
+    # Pattern 2: Direct numeric list (e.g., 1*(2+3+4))
+    # Specifically for numeric center labels and numeric leaves.
+    numeric_list_pattern = r"^(\d+)\*\(\s*(\d+(?:\s*\+\s*\d+)*)\s*\)$"
+    m2 = re.match(numeric_list_pattern, expr)
     if m2:
-        center_label = m2.group(1)           # e.g. "1"
-        leaves_part  = m2.group(2)           # e.g. "2+3+4"
-        leaf_labels  = [tok.strip() for tok in leaves_part.split("+")]
+        center_label = m2.group(1)
+        leaf_labels  = [tok.strip() for tok in m2.group(2).split("+")]
         return [(center_label, leaf) for leaf in leaf_labels]
 
-    # 3) Generic-label star: A*(B+C+D)
-    # Corrected: Replaced '' with '\(' and '\)' for literal parentheses.
-    generic_pattern = r"^([A-Za-z0-9]+)\*\(\s*([A-Za-z0-9]+(?:\s*\+\s*[A-Za-z0-9]+)*)\s*\)$"
-    m3 = re.match(generic_pattern, expr)
+    # Pattern 3: Alphanumeric/underscore labels (e.g., A*(B+C+D) or x_1*(x_2+x_3))
+    # Catches general alphanumeric and underscore labels for both center and leaves.
+    label_pattern = r"^([A-Za-z0-9_]+)\*\(\s*([A-Za-z0-9_]+(?:\s*\+\s*[A-Za-z0-9_]+)*)\s*\)$"
+    m3 = re.match(label_pattern, expr)
     if m3:
-        center_label = m3.group(1)           # e.g. "A" or "Node1"
-        leaves_part  = m3.group(2)           # e.g. "B+C+D" or "Leaf1+Leaf2"
-        leaf_labels  = [tok.strip() for tok in leaves_part.split("+")]
+        center_label = m3.group(1)
+        leaf_labels  = [tok.strip() for tok in m3.group(2).split("+")]
         return [(center_label, leaf) for leaf in leaf_labels]
 
-    # If none of the above patterns matched, return empty
+    # If no pattern matches, return an empty list
     return []
+
+
+
+
 
 
 
