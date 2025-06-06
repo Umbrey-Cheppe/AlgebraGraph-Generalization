@@ -170,73 +170,102 @@ def parse_leaf_list(tokens, current_index):
     while current_index < len(tokens) and tokens[current_index] != ')':
         start_of_leaf_term_index = current_index
         
-        # Determine the end of the current leaf term.
-        # It's either the next '+' at the same parenthesis level, or the closing ')'
-        paren_level = 0
-        end_of_leaf_term_index = current_index
-        while end_of_leaf_term_index < len(tokens):
-            token = tokens[end_of_leaf_term_index]
-            if token == '(':
-                paren_level += 1
-            elif token == ')':
-                paren_level -= 1
-            
-            if token == '+' and paren_level == 0:
-                break # Found a '+' at the current level, this is the end of the leaf term
-            if token == ')' and paren_level == -1: # This handles the closing ')' for the whole leaf list
-                 break
-            
-            end_of_leaf_term_index += 1
-
-        leaf_term_tokens = tokens[start_of_leaf_term_index:end_of_leaf_term_index]
+        # --- Attempt to parse as a range first ---
+        # Look for the pattern: TOKEN_START, +, ..., +, TOKEN_END
+        # This requires checking at least 5 tokens
         
-        if not leaf_term_tokens:
-            raise ValueError("Empty leaf term found in star graph list.")
+        is_range_parsed = False
+        
+        # Look for the '...' token within the current parsing scope
+        ellipsis_idx = -1
+        temp_paren_level = 0
+        for i in range(current_index, len(tokens)):
+            if tokens[i] == '(':
+                temp_paren_level += 1
+            elif tokens[i] == ')':
+                temp_paren_level -= 1
             
-        # Try to parse as a range first
-        # A range pattern typically has at least 5 tokens: NODE, +, ..., +, NODE
-        is_range = False
-        if len(leaf_term_tokens) >= 5 and leaf_term_tokens[1] == '+' and leaf_term_tokens[2] == '...':
-            # Numeric range: N+...N (e.g., 2+...+10)
-            if re.match(r'^\d+$', leaf_term_tokens[0]) and re.match(r'^\d+$', leaf_term_tokens[len(leaf_term_tokens)-1]):
-                start_num = int(leaf_term_tokens[0])
-                end_num = int(leaf_term_tokens[len(leaf_term_tokens)-1])
-                if start_num <= end_num:
-                    for i in range(start_num, end_num + 1):
-                        all_individual_leaf_nodes.add(parse_nodes(str(i)))
-                    is_range = True
-            # Alphanumeric range: X_N+...+X_N (e.g., x_2+...+x_5)
-            # This pattern is more strict: 'prefix', 'num', '+', '...', 'prefix', 'num'
-            elif len(leaf_term_tokens) == 5 and \
-                 re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[0]) and \
-                 re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[4]):
-                
-                match_start = re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[0])
-                match_end = re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[4])
-                
-                if match_start and match_end:
-                    start_prefix = match_start.group(1)
-                    start_num = int(match_start.group(2))
-                    end_prefix = match_end.group(1)
-                    end_num = int(match_end.group(2))
-                    
-                    if start_prefix == end_prefix and start_num <= end_num:
-                        for i in range(start_num, end_num + 1):
-                            all_individual_leaf_nodes.add(parse_nodes(f"{start_prefix}{i}"))
-                        is_range = True
-            
-            if not is_range: # If it looked like a range but didn't match the specific pattern
-                st.warning(f"💡 Range format not fully recognized for: `{''.join(leaf_term_tokens)}`. Trying as general term.")
+            if tokens[i] == '...' and temp_paren_level == 0:
+                ellipsis_idx = i
+                break
+            if tokens[i] == '+' and temp_paren_level == 0 and i > current_index: # Stop if we hit a '+' before '...'
+                break
+            if tokens[i] == ')' and temp_paren_level == -1: # Stop if we hit closing paren
+                break
 
-        if not is_range: # Not a range, treat as a regular sub-expression
+        if ellipsis_idx != -1: # '...' found at current level
+            # Check for pattern X + ... + Y
+            if (ellipsis_idx > current_index + 1 and # Must have a token before '+'
+                tokens[ellipsis_idx - 1] == '+' and # Must have '+' before '...'
+                ellipsis_idx + 1 < len(tokens) and # Must have token after '...'
+                tokens[ellipsis_idx + 1] == '+'): # Must have '+' after '...'
+
+                # Extract start and end tokens
+                start_token = tokens[ellipsis_idx - 2]
+                end_token = tokens[ellipsis_idx + 2]
+
+                # Numeric range: N+...N
+                if re.match(r'^\d+$', start_token) and re.match(r'^\d+$', end_token):
+                    start_num = int(start_token)
+                    end_num = int(end_token)
+                    if start_num <= end_num:
+                        for i in range(start_num, end_num + 1):
+                            all_individual_leaf_nodes.add(parse_nodes(str(i)))
+                        is_range_parsed = True
+                        current_index = ellipsis_idx + 3 # Move index past 'N + ... + N'
+
+                # Alphanumeric range: X_N+...+X_N
+                elif re.match(r'^([A-Za-z_]+)(\d+)$', start_token) and re.match(r'^([A-Za-z_]+)(\d+)$', end_token):
+                    match_start = re.match(r'^([A-Za-z_]+)(\d+)$', start_token)
+                    match_end = re.match(r'^([A-Za-z_]+)(\d+)$', end_token)
+                    
+                    if match_start and match_end:
+                        start_prefix = match_start.group(1)
+                        start_num = int(match_start.group(2))
+                        end_prefix = match_end.group(1)
+                        end_num = int(match_end.group(2))
+                        
+                        if start_prefix == end_prefix and start_num <= end_num:
+                            for i in range(start_num, end_num + 1):
+                                all_individual_leaf_nodes.add(parse_nodes(f"{start_prefix}{i}"))
+                            is_range_parsed = True
+                            current_index = ellipsis_idx + 3 # Move index past 'X_N + ... + X_N'
+                
+                if not is_range_parsed:
+                    st.warning(f"💡 Range format not fully recognized for: `{start_token}+{tokens[ellipsis_idx-1]}...{tokens[ellipsis_idx+1]}+{end_token}`. Trying as general term.")
+
+        if not is_range_parsed: # Not a range, or range format unrecognized
+            # Find the end of the current *single* leaf term (could be a node or a complex expression like D*E)
+            temp_paren_level = 0
+            end_of_current_leaf_term_index = current_index
+            while end_of_current_leaf_term_index < len(tokens):
+                token = tokens[end_of_current_leaf_term_index]
+                if token == '(':
+                    temp_paren_level += 1
+                elif token == ')':
+                    temp_paren_level -= 1
+                
+                if token == '+' and temp_paren_level == 0: # End of current leaf term
+                    break
+                if token == ')' and temp_paren_level == -1: # End of entire leaf list
+                    break
+                
+                end_of_current_leaf_term_index += 1
+            
+            leaf_term_tokens = tokens[start_of_leaf_term_index:end_of_current_leaf_term_index]
+            
+            if not leaf_term_tokens:
+                raise ValueError("Empty leaf term found in star graph list.")
+                
             sub_expr_string = "".join(leaf_term_tokens).strip()
+            
             if not sub_expr_string:
                 raise ValueError("Empty sub-expression string for leaf term.")
             
             try:
                 sub_expr_tokens = tokenize(sub_expr_string)
-                if not sub_expr_tokens: # Check for empty token list after re-tokenizing
-                    raise ValueError(f"Could not tokenize sub-expression: `{sub_expr_string}`")
+                if not sub_expr_tokens:
+                    raise ValueError(f"Could not re-tokenize sub-expression: `{sub_expr_string}`")
                     
                 sub_expr_edges, _, sub_expr_nodes = parse_expression(sub_expr_tokens, 0)
                 all_leaves_edges.update(sub_expr_edges)
@@ -246,7 +275,9 @@ def parse_leaf_list(tokens, current_index):
             except Exception as e:
                 raise ValueError(f"An unexpected error occurred parsing leaf term `{sub_expr_string}`: {e}")
                 
-        current_index = end_of_leaf_term_index
+            current_index = end_of_current_leaf_term_index
+
+        # After processing a leaf (either range or complex term), check for '+' separator
         if current_index < len(tokens) and tokens[current_index] == '+':
             current_index += 1 # Consume the '+' separator for the next leaf term
             
