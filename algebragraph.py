@@ -8,22 +8,23 @@ from itertools import combinations
 st.set_page_config(page_title="Algebraic Graph Visualizer", layout="centered")
 st.title("🌟 Algebraic Graph Visualizer (General Graphs) 🌟")
 st.markdown("""
-Enter a symbolic expression using:
-- `*` for **clique/complete subgraph** (e.g., `a*b` for edge, `1*2*3` for triangle). Order doesn't matter.
-- `+` for **graph union** (e.g., `(a*b)+(c*d)`).
-- **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)` or `1*(2+3+...+10)`). This is internally converted to a union of edges.
+Enter a symbolic expression to generate a graph.
+- `*` for **clique/complete subgraph** (e.g., `a*b` for edge, `1*2*3` for triangle on 1,2,3). Order doesn't matter (associative, commutative).
+- `+` for **graph union** (e.g., `(a*b)+(c*d)`). Follows absorption law `G_sup + G_sub = G_sup`.
+- **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)` or `1*(2+3+...+10)`). `Center` connects to individual nodes of leaves, and complex leaves (`D*E`) form their own cliques.
 
 **Examples:**
 - `a*b*c` (triangle on a,b,c)
 - `(1*2)+(3*4)` (two separate edges)
-- `1*(2+3+4)` (star graph with 1 as center)
+- `1*(2+3+4)` (star graph with 1 as center, leaves 2,3,4)
 - `A*(B+C+...+E)` (range-based star graph)
-- `(a*b*c) + (a*b)` (should simplify to `a*b*c` due to absorption)
-- `(1*2) + (1*3)` (two edges (1,2) and (1,3))
+- `(a*b*c) + (a*b)` (simplifies to `a*b*c` due to absorption)
+- `A*(B+C+D*E+F)` (A connects to B,C,D,E,F; also D connects to E)
+- `1*(1+2+...+10)` (Star graph. 1 is center, connects to 1-10. Self-loops are filtered.)
 """)
 
 # --- Input Field ---
-expr = st.text_input("Graph Expression:", "(a*b*c) + (a*b)", help="Try different formats!")
+expr = st.text_input("Graph Expression:", "A*(B+C+D*E+F)", help="Try different formats!")
 
 # --- Customization Options ---
 st.sidebar.header("Graph Customization")
@@ -33,366 +34,279 @@ font_color = st.sidebar.color_picker("Label Color", "#333333")
 node_size = st.sidebar.slider("Node Size", 100, 5000, 2000)
 font_size = st.sidebar.slider("Font Size", 8, 24, 12)
 
-# --- Algebraic Graph Parser ---
+# --- Helper Functions ---
 
 def parse_nodes(node_str):
     """Converts a node string to int if numeric, else keeps as string."""
-    return int(node_str) if node_str.isdigit() else node_str
+    try:
+        return int(node_str)
+    except ValueError:
+        return node_str
 
 def generate_clique_edges(nodes_list):
     """Generates edges for a complete graph (clique) given a list of nodes."""
     if len(nodes_list) < 2:
-        return set() # A single node or empty doesn't form an edge
+        return set()
     
     clique_edges = set()
-    # Use combinations to get all unique pairs for a complete graph
-    for u, v in combinations(sorted(nodes_list, key=str), 2): # Sort for consistent edge representation (u,v) where u<v
-        clique_edges.add(tuple(sorted((u, v), key=str))) # Ensure (u,v) not (v,u)
+    # Sort for consistent edge representation (u,v) where u<v, regardless of input order
+    sorted_nodes = sorted(nodes_list, key=str) 
+    for u, v in combinations(sorted_nodes, 2):
+        clique_edges.add((u, v)) # Edges are inherently symmetric in undirected graph
     return clique_edges
 
-def parse_star_graph_to_edges(star_expr):
-    """
-    Parses a star graph expression and converts it into a set of (center*leaf) edges.
-    e.g., "1*(2+3+4)" -> {(1,2), (1,3), (1,4)}
-    e.g., "x_1*(x_2+...+x_5)" -> {(x_1, x_2), ..., (x_1, x_5)}
-    """
-    star_pattern = r"^([A-Za-z0-9_]+)\*\((.*)\)$"
-    match = re.match(star_pattern, star_expr)
+# --- Main Parsing Logic ---
 
-    if not match:
-        return set()
+# Tokenization
+TOKEN_PATTERN = re.compile(r'([A-Za-z0-9_]+|\*|\+|\(|\)|\.\.\.)')
 
-    center_label = parse_nodes(match.group(1).strip())
-    leaves_part = match.group(2).strip()
+def tokenize(expression):
+    return [match.group(0) for match in TOKEN_PATTERN.finditer(expression)]
+
+# Recursive Descent Parser with Operator Precedence and Star Graph Handling
+
+def parse_expression(tokens, index):
+    """
+    Parses a graph expression based on operator precedence (+ lowest, * highest).
+    Handles parentheses and the special Star Graph syntax.
+    Returns (set of edges, new_index, set of all nodes in this sub-expression)
+    """
+    edges_from_term1, index, nodes_in_term1 = parse_sum_term(tokens, index)
     
-    star_edges = set()
-
-    # Attempt to parse as a range first
-    # Numeric Range (e.g., 2+3+...+10)
-    numeric_range_pattern = r"^(\d+)\s*\+\s*(?:\.\.\.|…)\s*(\d+)$"
-    match_numeric_range = re.match(numeric_range_pattern, leaves_part)
-
-    if match_numeric_range:
-        start = int(match_numeric_range.group(1))
-        end = int(match_numeric_range.group(2))
-        if start <= end:
-            for i in range(start, end + 1):
-                star_edges.add(tuple(sorted((center_label, str(i)), key=str)))
-        return star_edges
-
-    # Alphanumeric Range (e.g., x_2+...+x_5)
-    alphanum_range_pattern = r"^([A-Za-z_]+)(\d+)\s*\+\s*(?:\.\.\.|…)\s*([A-Za-z_]+)(\d+)$"
-    match_alphanum_range = re.match(alphanum_range_pattern, leaves_part)
-
-    if match_alphanum_range:
-        start_prefix = match_alphanum_range.group(1)
-        start_num = int(match_alphanum_range.group(2))
-        end_prefix = match_alphanum_range.group(3)
-        end_num = int(match_alphanum_range.group(4))
-
-        if start_prefix == end_prefix and start_num <= end_num:
-            for i in range(start_num, end_num + 1):
-                star_edges.add(tuple(sorted((center_label, f"{start_prefix}{i}"), key=str)))
-        return star_edges
-
-    # Direct list of leaves (e.g., 2+3+4 or B+C+D)
-    leaf_labels = [parse_nodes(tok.strip()) for tok in leaves_part.split("+") if tok.strip()]
-    for leaf in leaf_labels:
-        star_edges.add(tuple(sorted((center_label, leaf), key=str)))
-        
-    return star_edges
-
-
-def parse_algebraic_expression_to_edges(expr):
-    """
-    Parses the full algebraic expression into a set of raw edges.
-    Handles *, +, and parentheses.
-    """
-    expr = expr.replace(" ", "").strip() # Remove all spaces
-
-    # Convert star graph syntax to internal (center*leaf) + (center*leaf) form
-    # This must be done before general '+' splitting
-    star_match = re.match(r"^([A-Za-z0-9_]+)\*\((.*)\)$", expr)
-    if star_match:
-        # If it's a star graph, directly parse its edges
-        return parse_star_graph_to_edges(expr)
-
-
-    # Regular expression to split by '+' operator,
-    # being careful not to split inside parentheses.
-    # This is a common challenge for basic regex parsers.
-    # A more robust solution might use a Shunting-yard algorithm or similar.
-    # For now, let's assume terms are wrapped in parentheses if they contain '+'
-    # and are part of a larger union.
+    # After parsing the first sum term, look for '+'
+    while index < len(tokens) and tokens[index] == '+':
+        index += 1 # Consume '+'
+        edges_from_term2, index, nodes_in_term2 = parse_sum_term(tokens, index)
+        edges_from_term1.update(edges_from_term2) # Union of edges
+        nodes_in_term1.update(nodes_in_term2) # Union of nodes
     
-    # Split by '+' where '+' is NOT inside a pair of parentheses
-    # This regex is an attempt to handle basic (A+B)+(C*D) unions,
-    # but still imperfect for deeply nested or complex cases without a full parser.
-    # It tries to split based on '+', respecting parentheses that contain other operations.
-    terms = re.split(r'\)\s*\+\s*\(', expr)
+    return edges_from_term1, index, nodes_in_term1
+
+def parse_sum_term(tokens, index):
+    """Parses terms separated by '*' or the star graph operator."""
+    edges_from_factor1, index, nodes_in_factor1 = parse_factor(tokens, index)
+
+    # Check for Star Graph or Multiplication
+    # If the current token is '*', and the next is '(', it's a Star Graph.
+    # Otherwise, it's a standard multiplication (clique formation).
+    if index < len(tokens) and tokens[index] == '*':
+        if index + 1 < len(tokens) and tokens[index+1] == '(':
+            # It's a star graph!
+            center_node_token = tokens[index-1] # The token before '*' was the center
+            center_node = parse_nodes(center_node_token)
+
+            # Consume '*' and '('
+            index += 2
+            
+            # Parse the leaves list within the parentheses
+            leaves_edges, index, leaves_nodes = parse_leaf_list(tokens, index)
+            
+            # Combine current edges (if any from center_node itself, though usually empty) with leaves_edges (from complex leaves like D*E)
+            edges_from_factor1.update(leaves_edges)
+            nodes_in_factor1.update(leaves_nodes) # Union of all nodes in leaves
+
+            # Add edges from center to each individual node in the leaves_nodes
+            for leaf_node in leaves_nodes:
+                # Ensure we don't add self-loops explicitly here; filtering happens later.
+                # But it's good practice to make sure the edge is (center, leaf_node)
+                if center_node != leaf_node:
+                    edges_from_factor1.add(tuple(sorted((center_node, leaf_node), key=str)))
+            
+            # Ensure center node is included in the set of nodes for this factor
+            nodes_in_factor1.add(center_node)
+
+            # Expect ')'
+            if index < len(tokens) and tokens[index] == ')':
+                index += 1
+            else:
+                raise ValueError("Expected ')' after star graph leaves.")
+            
+        else: # Standard multiplication (clique formation)
+            # Collect all nodes connected by '*'
+            node_tokens = [tokens[index-1]] # Start with the node before '*'
+            
+            while index < len(tokens) and tokens[index] == '*':
+                index += 1 # Consume '*'
+                if index < len(tokens) and re.match(r'[A-Za-z0-9_]+', tokens[index]):
+                    node_tokens.append(tokens[index])
+                    index += 1
+                else:
+                    raise ValueError("Expected node after '*' operator.")
+            
+            # Convert node tokens to parsed nodes
+            clique_nodes = [parse_nodes(n) for n in node_tokens]
+            
+            # Generate clique edges for these nodes
+            edges_from_factor1 = generate_clique_edges(clique_nodes)
+            nodes_in_factor1 = set(clique_nodes) # All nodes in this clique
+            
+    return edges_from_factor1, index, nodes_in_factor1
+
+def parse_factor(tokens, index):
+    """Parses a primary factor: a node, a parenthesized expression."""
+    current_token = tokens[index]
     
-    # If no complex union (no ')+(' pattern), treat the whole thing as one term or a simple union
-    if len(terms) == 1 and '(' not in terms[0] and ')' not in terms[0] and '+' in terms[0]:
-        # Handle simple A+B+C (assuming it's a union of single nodes or simple cliques)
-        # This is ambiguous in your algebra. Let's assume (A)+(B)+(C) or (A*B)+(C)
-        # For simplicity, if it's A+B without parens, we'll try to parse each as a separate item.
-        # This needs more formal definition. For now, we'll stick to parsing A*B or (A*B)+(C*D)
-        pass # Fall through to handling single terms if it's not a complex union
-
-    all_raw_edges = set()
-
-    # Re-process terms to handle potential partial parentheses if they were split
-    processed_terms = []
-    if len(terms) > 1: # Indicates a union was detected
-        for i, term in enumerate(terms):
-            clean_term = term.strip()
-            if i > 0 and not clean_term.startswith('('):
-                clean_term = '(' + clean_term
-            if i < len(terms) - 1 and not clean_term.endswith(')'):
-                clean_term = clean_term + ')'
-            processed_terms.append(clean_term)
+    if current_token == '(':
+        index += 1 # Consume '('
+        edges, index, nodes = parse_expression(tokens, index)
+        if index < len(tokens) and tokens[index] == ')':
+            index += 1 # Consume ')'
+            return edges, index, nodes
+        else:
+            raise ValueError("Mismatched parentheses: Expected ')'")
+    elif re.match(r'[A-Za-z0-9_]+', current_token): # It's a node
+        node = parse_nodes(current_token)
+        index += 1
+        return set(), index, {node} # A single node forms no edges on its own
     else:
-        processed_terms = [expr] # No complex union, treat as single term
+        raise ValueError(f"Unexpected token: {current_token} at index {index}. Expected node or '('.")
 
-    
-    for term in processed_terms:
-        term = term.strip().strip('()') # Remove outermost parentheses if present
-
-        # Split by '*' to get nodes for a clique
-        clique_nodes_str = [node.strip() for node in term.split('*') if node.strip()]
-        
-        if not clique_nodes_str:
-            st.warning(f"💡 Could not parse term: `{term}`. Check clique or union format.")
-            return set() # Indicate parse failure for the term
-
-        clique_nodes = [parse_nodes(n) for n in clique_nodes_str]
-        
-        # Generate all edges for this clique
-        clique_edges = generate_clique_edges(clique_nodes)
-        all_raw_edges.update(clique_edges)
-
-    return all_raw_edges
-
-def simplify_edges_with_absorption(edges_set):
+def parse_leaf_list(tokens, current_index):
     """
-    Applies the absorption law (G_sup + G_sub = G_sup) by filtering out
-    edges/cliques that are subgraphs of larger cliques present.
-    This is a heuristic for path absorption `a*b*c + a*b = a*b*c`.
-    
-    This is a challenging problem without a full graph representation for each term.
-    A simple approach: if a set of nodes forms a larger clique, and another set forms
-    a sub-clique (or edge), the smaller one is absorbed.
-    
-    For example: if {(a,b), (b,c), (a,c)} (from a*b*c) exists, and {(a,b)} (from a*b) exists,
-    then (a,b) should be absorbed.
+    Parses the comma/plus-separated list of leaves within a star graph's parentheses.
+    Handles ranges (e.g., 2+...+10) and complex leaf terms (e.g., D*E).
+    Returns (set of edges from complex leaves, new_index, set of individual leaf nodes)
     """
+    all_leaves_edges = set()
+    all_individual_leaf_nodes = set()
     
-    # Convert edges to a list for iteration
-    current_edges = list(edges_set)
-    simplified_edges = set(edges_set) # Start with all unique edges
+    while current_index < len(tokens) and tokens[current_index] != ')':
+        start_of_leaf_term_index = current_index
+        
+        # Find the end of the current leaf term. This needs to correctly handle
+        # operators like '*' within the leaf term, and '+' as separators between leaves.
+        # It should stop at a '+' that is at the current level, or at a ')'
+        
+        paren_level = 0
+        end_of_leaf_term_index = current_index
+        while end_of_leaf_term_index < len(tokens):
+            token = tokens[end_of_leaf_term_index]
+            if token == '(':
+                paren_level += 1
+            elif token == ')':
+                paren_level -= 1
+            
+            if token == '+' and paren_level == 0: # Found a '+' at the current level, end of this leaf term
+                break
+            if token == ')' and paren_level == -1: # End of the main leaf list
+                break
+            
+            end_of_leaf_term_index += 1
+        
+        leaf_term_tokens = tokens[start_of_leaf_term_index:end_of_leaf_term_index]
+        
+        if not leaf_term_tokens: # Should not happen if parsing is correct
+            break 
+            
+        # Try to parse as a range first
+        # Check if it matches 'N+...+N' or 'X_N+...+X_N' pattern
+        if len(leaf_term_tokens) >= 5 and leaf_term_tokens[1] == '+' and leaf_term_tokens[2] == '...':
+            # Numeric range: N+...N (e.g., 2+...+10)
+            if re.match(r'^\d+$', leaf_term_tokens[0]) and re.match(r'^\d+$', leaf_term_tokens[4]):
+                start_num = int(leaf_term_tokens[0])
+                end_num = int(leaf_term_tokens[4])
+                if start_num <= end_num:
+                    for i in range(start_num, end_num + 1):
+                        all_individual_leaf_nodes.add(parse_nodes(str(i)))
+            # Alphanumeric range: X_N+...+X_N (e.g., x_2+...+x_5)
+            elif len(leaf_term_tokens) == 5 and re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[0]) and re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[4]):
+                match_start = re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[0])
+                match_end = re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[4])
+                
+                if match_start and match_end:
+                    start_prefix = match_start.group(1)
+                    start_num = int(match_start.group(2))
+                    end_prefix = match_end.group(1)
+                    end_num = int(match_end.group(2))
+                    
+                    if start_prefix == end_prefix and start_num <= end_num:
+                        for i in range(start_num, end_num + 1):
+                            all_individual_leaf_nodes.add(parse_nodes(f"{start_prefix}{i}"))
+            else:
+                 st.warning(f"💡 Unrecognized range format in leaf list: `{''.join(leaf_term_tokens)}`. Expected 'N+...N' or 'X_N+...+X_N'.")
 
-    # Sort edges for consistent comparison (e.g., ('a', 'b') is same as ('b', 'a'))
-    # Ensure they are consistently ordered tuples
-    normalized_edges = {tuple(sorted(edge, key=str)) for edge in edges_set}
-
-    # This is a very simplified absorption logic for *cliques* and *sub-cliques/edges*.
-    # A true "path absorption" (e.g., a*b*c absorbing a*b) requires path detection.
-    # Given a*b*c is a clique, then a*b is one of its edges, so the (a,b) edge is part of the (a,b,c) clique.
-    # We essentially only keep the largest cliques defined.
-    
-    # Store sets of nodes that form cliques (e.g., {'a', 'b', 'c'} from a*b*c)
-    # and their generated edges.
-    
-    # To implement absorption, we need to detect the original "terms"
-    # and then check if the edges generated by one term are a subset of another.
-    # This function would need to be integrated higher up, perhaps at the AST level,
-    # or by storing the *original node sets* that formed each clique.
-
-    # For now, if we have (a,b), (a,c), (b,c) AND (a,b), the set() conversion already
-    # prevents duplicates. The 'absorption' here refers to the *conceptual* removal
-    # of the term `a*b` from the expression `(a*b*c) + (a*b) = a*b*c`.
-    # This means the parser should *only* return edges from `a*b*c`.
-
-    # Let's revisit this by ensuring the *parser* directly applies the absorption.
-    # The parser should create a list of *clique node sets* from each term.
-    # Then, we apply absorption on *these sets*.
-
-    # For now, the `parse_algebraic_expression_to_edges` will gather all edges,
-    # and the absorption will need to be applied to the *terms* before combining their edges.
-    
-    # This function will be called with the *final* set of edges.
-    # The absorption logic for `a*b*c + a*b = a*b*c` is best handled by finding all cliques
-    # and then removing those cliques whose edges are subsets of other cliques' edges.
-    
-    # A simpler approach for the current implementation:
-    # Collect all unique node sets that form cliques.
-    # For each clique C, if there's another clique C_prime such that C_prime is a subset of C,
-    # then C_prime is 'absorbed'.
-    
-    # This is getting complex without a full parser. Let's simplify the initial
-    # absorption for this iteration:
-    # If the input is exactly (a*b*c) + (a*b), we can hardcode for now.
-    # A more general absorption requires recognizing terms and their graphs.
-    
-    # For now, the `parse_algebraic_expression_to_edges` produces the raw edges.
-    # True absorption will require understanding the original terms.
-    
-    return simplified_edges # Placeholder for now, as direct edge-set absorption is hard here.
+        else: # Not a range, treat as a regular sub-expression (could be a node or a clique like D*E)
+            # Crucially: We need to join the tokens back into a string to re-tokenize for parse_expression
+            sub_expr_string = "".join(leaf_term_tokens)
+            try:
+                sub_expr_tokens = tokenize(sub_expr_string)
+                sub_expr_edges, _, sub_expr_nodes = parse_expression(sub_expr_tokens, 0)
+                all_leaves_edges.update(sub_expr_edges)
+                all_individual_leaf_nodes.update(sub_expr_nodes)
+            except ValueError as e:
+                st.warning(f"💡 Could not parse leaf term: `{sub_expr_string}`. Error: {e}")
+                
+        current_index = end_of_leaf_term_index
+        if current_index < len(tokens) and tokens[current_index] == '+':
+            current_index += 1 # Consume the '+' separator
+            
+    return all_leaves_edges, current_index, all_individual_leaf_nodes
 
 
-# --- Main Parsing Function ---
+# --- Main Driver Function for Parsing and Simplification ---
+
 def parse_and_simplify_graph_expression(expr):
     """
-    Combines parsing and a simplified absorption logic.
+    Tokenizes the expression, parses it, and then effectively applies absorption
+    through set-based union of edges.
     """
-    expr = expr.replace(" ", "").strip() # Remove all spaces
+    expr = expr.replace(" ", "").strip()
+    if not expr:
+        return set(), set() # No edges, no nodes if empty expression
 
-    # Regex to extract terms that are either:
-    # 1. Star graph: CENTER*(LEAVES)
-    # 2. Cliques: NODE*NODE...
-    # 3. Parenthesized terms for union: (...)
+    tokens = tokenize(expr)
     
-    # This pattern tries to find individual terms that are either
-    # a star graph, or a group in parentheses, or a simple clique/node string.
-    # It attempts to split by '+' while respecting parentheses
-    # This is still a heuristic for complex union expressions.
-    
-    # Let's try to tokenize and build from basic units
-    
-    # 1. Tokenization: Identify nodes, operators, and parentheses
-    tokens = re.findall(r'([A-Za-z0-9_]+|\*|\+|\(|\.|\.\.\.)', expr) # Added 'dot' for ellipsis
-    
-    # Convert '...' to a single token
-    i = 0
-    cleaned_tokens = []
-    while i < len(tokens):
-        if tokens[i] == '.' and i + 2 < len(tokens) and tokens[i+1] == '.' and tokens[i+2] == '.':
-            cleaned_tokens.append('...')
-            i += 3
-        else:
-            cleaned_tokens.append(tokens[i])
-            i += 1
-    
-    # Now, process tokens using a very basic precedence for * over +
-    # This is effectively a simplified Shunting-Yard like approach for very specific patterns.
-    
-    # For this iteration, let's simplify how we tackle the specific example:
-    # (a*b*c) + (a*b)
-    # If the input contains '+', we'll split it into components.
-    
-    # First, handle the special case of 'Center*(...)' as a star graph.
-    # The `parse_star_graph_to_edges` function handles this and converts it to a set of edges.
-    star_graph_edges = parse_star_graph_to_edges(expr)
-    if star_graph_edges:
-        return star_graph_edges # If it's a star graph, directly return its edges
-
-    # Now, handle general algebraic expressions (cliques and unions)
-    # This needs a more formal parser structure or a very careful regex.
-    # Let's simplify to: split by '+' outside of any parentheses.
-    
-    # Regex to split terms by '+' if it's NOT inside a pair of parentheses
-    # (?: \([^()]*\) | [^()+]+ )+  -- matches balanced parentheses or non-operator sequences
-    # Simplified regex for splitting by outer '+', still challenging.
-    
-    # Simple split by '+' and assume terms are either a*b*c or (a*b*c)
-    terms = re.split(r'\s*\+\s*', expr)
-    
-    final_edges = set()
-    all_clique_node_sets = [] # To store node sets from each clique term, for absorption check
-
-    for term in terms:
-        term = term.strip().strip('()') # Remove outer parentheses
+    try:
+        raw_edges, final_index, all_nodes_in_expr = parse_expression(tokens, 0)
         
-        clique_nodes_str = [node.strip() for node in term.split('*') if node.strip()]
+        if final_index != len(tokens):
+            st.error(f"⚠️ Unparsed tokens remaining: {''.join(tokens[final_index:])}. Check your expression syntax.")
+            return set(), set()
+            
+        # The absorption logic (G_sup + G_sub = G_sup) is inherently handled
+        # by the use of `set.update()` for combining edges.
+        # If (a,b) is generated from 'a*b' and also from 'a*b*c',
+        # adding it to the set multiple times has no effect,
+        # so the final set contains only the edges of the largest clique.
         
-        if not clique_nodes_str:
-            st.warning(f"💡 Could not parse term: `{term}`. Check clique format or syntax.")
-            return set() # Indicate failure for this term
+        return raw_edges, all_nodes_in_expr
 
-        clique_nodes = [parse_nodes(n) for n in clique_nodes_str]
-        
-        # Store the set of nodes for this clique for later absorption check
-        all_clique_node_sets.append(frozenset(clique_nodes)) # Use frozenset for immutability in a set
-
-        # Generate edges for this clique
-        clique_edges = generate_clique_edges(clique_nodes)
-        final_edges.update(clique_edges) # Add to the overall set of edges (union)
-
-    # --- Apply Absorption Law (a*b*c + a*b = a*b*c) ---
-    # This involves checking if any smaller clique's node set is a subset of a larger clique's node set.
-    # If so, the edges from the smaller clique would already be covered by the larger one.
-    # Since `final_edges` already uses a set (handling `(a,b) + (a,b)`),
-    # the absorption needs to filter out edges that belong *only* to an absorbed smaller clique.
-
-    # We need to determine which 'terms' (cliques) are absorbed.
-    unabsorbed_clique_node_sets = set(all_clique_node_sets)
-
-    for c1_set in all_clique_node_sets:
-        for c2_set in all_clique_node_sets:
-            if c1_set != c2_set and c1_set.issubset(c2_set):
-                # If c1_set is a proper subset of c2_set, then c1_set is absorbed by c2_set.
-                # Remove c1_set from the set of unabsorbed cliques.
-                if c1_set in unabsorbed_clique_node_sets: # Make sure it hasn't been removed by another absorption
-                    unabsorbed_clique_node_sets.discard(c1_set)
-
-    # Now, regenerate the final edges ONLY from the unabsorbed cliques
-    simplified_final_edges = set()
-    for clique_nodes_subset in unabsorbed_clique_node_sets:
-        simplified_final_edges.update(generate_clique_edges(list(clique_nodes_subset)))
-        
-    return simplified_final_edges
+    except ValueError as e:
+        st.error(f"❌ Parsing Error: {e}")
+        return set(), set()
+    except Exception as e:
+        st.error(f"⚠️ An unexpected error occurred: {e}. Please check your expression format.")
+        return set(), set()
 
 # --- Graph Drawing ---
 st.markdown("---")
 if st.button("Draw Graph"):
-    # Call the new combined parser and simplifier
-    edges_to_draw = parse_and_simplify_graph_expression(expr)
+    edges_to_draw, all_nodes_in_expr = parse_and_simplify_graph_expression(expr)
     
-    if not edges_to_draw:
-        st.error("❌ Failed to parse or generate edges from expression. Please ensure it follows a supported format. Check hints above.")
-        st.warning("Possible issues: Malformed ranges, empty terms, unhandled nesting.")
+    if not edges_to_draw and not all_nodes_in_expr:
+        st.error("❌ Failed to parse expression or no nodes/edges generated. Check expression and hints.")
     else:
         # --- Filter out self-loops (u, u) ---
-        # This is already handled by `generate_clique_edges` not adding (u,u) if len(nodes) < 2
-        # However, a single node "A" for example won't have edges. We need to explicitly add nodes.
-        
         final_edges_for_nx = []
         for u, v in edges_to_draw:
-            if u != v: # Final check to ensure no self-loops, even if my logic missed one.
+            if u != v:
                 final_edges_for_nx.append((u, v))
         
-        if not final_edges_for_nx:
-            # If all edges were self-loops and filtered, or nothing was generated
-            st.info("The expression resulted in no distinct edges (possibly only self-loops, which are filtered based on `A*A=A` idempotence). No graph with edges to display.")
+        # --- Create Graph ---
+        G = nx.Graph()
+        
+        # Add all nodes identified during parsing, ensuring isolated nodes are included
+        G.add_nodes_from(list(all_nodes_in_expr))
+        
+        # Add filtered edges
+        G.add_edges_from(final_edges_for_nx)
+        
+        # --- Visualization ---
+        if not G.nodes(): # No nodes at all after processing
+            st.info("The expression resulted in no visible graph (possibly empty or only filtered self-loops).")
             st.warning("Consider an expression that creates distinct connections, like `1*(2+3)` or `a*b`.")
-            
-            # --- Ensure isolated nodes are still displayed ---
-            # Extract all nodes from the original expression, even if they don't form edges.
-            all_nodes_in_expr = set()
-            try:
-                # Find all potential nodes in the expression (very broad search)
-                node_candidates = re.findall(r'[A-Za-z0-9_]+', expr)
-                for nc in node_candidates:
-                    all_nodes_in_expr.add(parse_nodes(nc))
-            except Exception:
-                pass # Best effort to get nodes
-
-            if all_nodes_in_expr:
-                G_temp = nx.Graph()
-                G_temp.add_nodes_from(list(all_nodes_in_expr))
-                
-                pos = nx.spring_layout(G_temp, seed=42)
-                fig, ax = plt.subplots(figsize=(8, 6))
-                nx.draw(G_temp, pos, with_labels=True, node_color=node_color, font_color=font_color,
-                        font_weight="bold", node_size=node_size, font_size=font_size, ax=ax)
-                ax.set_title(f"Graph for: `{expr}` (Isolated Nodes)", size=font_size + 4, color=font_color)
-                st.pyplot(fig)
-                
         else:
-            G = nx.Graph()
-            G.add_edges_from(final_edges_for_nx)
-            
-            pos = nx.spring_layout(G, seed=42)
+            pos = nx.spring_layout(G, seed=42) # Consistent layout
             
             fig, ax = plt.subplots(figsize=(8, 6))
             
@@ -406,11 +320,9 @@ if st.button("Draw Graph"):
                     font_size=font_size,
                     ax=ax)
             
-            ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, absorbed terms simplified)", size=font_size + 4, color=font_color)
+            ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color)
             st.pyplot(fig)
 
 # --- Footer ---
 st.markdown("---")
-st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A` or `1*(1+...)`) are **filtered** due to `A*A=A` idempotence. Absorption law (`a*b*c + a*b = a*b*c`) is applied by filtering sub-cliques.")
-
-
+st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
