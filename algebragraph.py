@@ -24,7 +24,7 @@ Enter a symbolic expression to generate a graph.
 """)
 
 # --- Input Field ---
-expr = st.text_input("Graph Expression:", "A*(B+C+D*E+F)", help="Try different formats!")
+expr = st.text_input("Graph Expression:", "1*(1+2+...+100)", help="Try different formats!")
 
 # --- Customization Options ---
 st.sidebar.header("Graph Customization")
@@ -173,10 +173,6 @@ def parse_leaf_list(tokens, current_index):
     while current_index < len(tokens) and tokens[current_index] != ')':
         start_of_leaf_term_index = current_index
         
-        # Find the end of the current leaf term. This needs to correctly handle
-        # operators like '*' within the leaf term, and '+' as separators between leaves.
-        # It should stop at a '+' that is at the current level, or at a ')'
-        
         paren_level = 0
         end_of_leaf_term_index = current_index
         while end_of_leaf_term_index < len(tokens):
@@ -188,7 +184,7 @@ def parse_leaf_list(tokens, current_index):
             
             if token == '+' and paren_level == 0: # Found a '+' at the current level, end of this leaf term
                 break
-            if token == ')' and paren_level == -1: # End of the main leaf list
+            if token == ')' and paren_level == 0: # End of the main leaf list (important: check paren_level == 0)
                 break
             
             end_of_leaf_term_index += 1
@@ -198,8 +194,11 @@ def parse_leaf_list(tokens, current_index):
         if not leaf_term_tokens: # Should not happen if parsing is correct
             break 
             
-        # Try to parse as a range first
-        # Check if it matches 'N+...+N' or 'X_N+...+X_N' pattern
+        # Check for range pattern
+        # The range pattern is typically N+...+N or X_N+...+X_N
+        # This requires checking the *structure* of leaf_term_tokens
+        
+        is_range = False
         if len(leaf_term_tokens) >= 5 and leaf_term_tokens[1] == '+' and leaf_term_tokens[2] == '...':
             # Numeric range: N+...N (e.g., 2+...+10)
             if re.match(r'^\d+$', leaf_term_tokens[0]) and re.match(r'^\d+$', leaf_term_tokens[4]):
@@ -208,6 +207,7 @@ def parse_leaf_list(tokens, current_index):
                 if start_num <= end_num:
                     for i in range(start_num, end_num + 1):
                         all_individual_leaf_nodes.add(parse_nodes(str(i)))
+                    is_range = True
             # Alphanumeric range: X_N+...+X_N (e.g., x_2+...+x_5)
             elif len(leaf_term_tokens) == 5 and re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[0]) and re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[4]):
                 match_start = re.match(r'^([A-Za-z_]+)(\d+)$', leaf_term_tokens[0])
@@ -222,20 +222,30 @@ def parse_leaf_list(tokens, current_index):
                     if start_prefix == end_prefix and start_num <= end_num:
                         for i in range(start_num, end_num + 1):
                             all_individual_leaf_nodes.add(parse_nodes(f"{start_prefix}{i}"))
-            else:
-                 st.warning(f"💡 Unrecognized range format in leaf list: `{''.join(leaf_term_tokens)}`. Expected 'N+...N' or 'X_N+...+X_N'.")
+                        is_range = True
+            
+            if not is_range: # If it looked like a range but didn't match the pattern
+                st.warning(f"💡 Unrecognized range format in leaf list: `{''.join(leaf_term_tokens)}`. Expected 'N+...N' or 'X_N+...+X_N'.")
 
-        else: # Not a range, treat as a regular sub-expression (could be a node or a clique like D*E)
-            # Crucially: We need to join the tokens back into a string to re-tokenize for parse_expression
-            sub_expr_string = "".join(leaf_term_tokens)
-            try:
-                sub_expr_tokens = tokenize(sub_expr_string)
-                sub_expr_edges, _, sub_expr_nodes = parse_expression(sub_expr_tokens, 0)
-                all_leaves_edges.update(sub_expr_edges)
-                all_individual_leaf_nodes.update(sub_expr_nodes)
-            except ValueError as e:
-                st.warning(f"💡 Could not parse leaf term: `{sub_expr_string}`. Error: {e}")
-                
+        if not is_range: # Not a range, treat as a regular sub-expression (could be a node or a clique like D*E)
+            # Crucially: Reconstruct the string and re-tokenize for recursive parsing
+            sub_expr_string = "".join(leaf_term_tokens).strip()
+            if not sub_expr_string:
+                st.warning("Empty leaf term found in star graph.")
+            else:
+                try:
+                    sub_expr_tokens = tokenize(sub_expr_string)
+                    # Check if tokens list is not empty before parsing
+                    if sub_expr_tokens:
+                        sub_expr_edges, _, sub_expr_nodes = parse_expression(sub_expr_tokens, 0)
+                        all_leaves_edges.update(sub_expr_edges)
+                        all_individual_leaf_nodes.update(sub_expr_nodes)
+                    else:
+                        st.warning(f"Skipping empty token list for leaf term: `{sub_expr_string}`")
+
+                except ValueError as e:
+                    st.warning(f"💡 Could not parse leaf term: `{sub_expr_string}`. Error: {e}")
+                    
         current_index = end_of_leaf_term_index
         if current_index < len(tokens) and tokens[current_index] == '+':
             current_index += 1 # Consume the '+' separator
@@ -306,9 +316,16 @@ if st.button("Draw Graph"):
             st.info("The expression resulted in no visible graph (possibly empty or only filtered self-loops).")
             st.warning("Consider an expression that creates distinct connections, like `1*(2+3)` or `a*b`.")
         else:
-            pos = nx.spring_layout(G, seed=42) # Consistent layout
+            # If the graph is very large (e.g., 100 nodes), spring_layout might be slow
+            # or result in an unreadable tangle. Max nodes for visualization is a practical limit.
+            if G.order() > 50: # If more than 50 nodes, use a simpler layout or warn
+                st.warning(f"Graph has {G.order()} nodes. Visualization might be slow or crowded.")
+                # You might consider nx.circular_layout or nx.shell_layout for large graphs if spring_layout is too slow
+                pos = nx.circular_layout(G)
+            else:
+                pos = nx.spring_layout(G, seed=42) # Consistent layout
             
-            fig, ax = plt.subplots(figsize=(8, 6))
+            fig, ax = plt.subplots(figsize=(10, 8)) # Increased figsize for larger graphs
             
             nx.draw(G, pos,
                     with_labels=True,
