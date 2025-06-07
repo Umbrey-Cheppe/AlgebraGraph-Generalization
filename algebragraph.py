@@ -4,17 +4,10 @@ import networkx as nx
 import re
 from itertools import combinations
 import math
-import plotly.graph_objects as go # For 3D visualization
-import random # <--- Added this import for random jitter
-
-# --- Installation Instructions (for user) ---
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 📦 Install Libraries")
-st.sidebar.code("pip install matplotlib plotly streamlit networkx")
-st.sidebar.markdown("---")
+import random # For random jitter in layout
 
 # --- Streamlit Page Setup ---
-st.set_page_config(page_title="Algebraic Graph Visualizer", layout="wide") # Changed to wide layout for more space
+st.set_page_config(page_title="Algebraic Graph Visualizer", layout="wide")
 st.title("🌟 Algebraic Graph Visualizer (General Graphs) 🌟")
 st.markdown("""
 Enter a symbolic expression to generate a graph.
@@ -23,7 +16,7 @@ Enter a symbolic expression to generate a graph.
 - **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)` or `Center*(Leaf1+Leaf2+...+LeafN)`).
   - `Center` connects to individual nodes of leaves.
   - Complex leaves (`D*E`) form their own cliques.
-  - **Important for Ranges:** For numerical ranges, use `Start + ... + End` (e.g., `A*(1+2+...+100)`). The `+` signs around `...` are necessary.
+  - **Important for Ranges:** For numerical ranges, use `Start + ... + End` (e.g., `A*(1+2+...+100)`). The `+` signs around `...` are necessary for correct parsing.
   - **Important for Ranges:** For alphanumeric ranges, use `Prefix_StartNum + ... + Prefix_EndNum` (e.g., `X_1+X_2+...+X_10`).
 
 **Examples:**
@@ -36,7 +29,7 @@ Enter a symbolic expression to generate a graph.
 """)
 
 # --- Input Field ---
-expr = st.text_input("Graph Expression:", "A*(1+2+...+100)", help="Try different formats!") # Default to a large star graph
+expr = st.text_input("Graph Expression:", "A*(1+2+...+100)", help="Try different formats!")
 
 # --- Customization Options (Sidebar) ---
 st.sidebar.header("Graph Customization")
@@ -63,21 +56,26 @@ edge_color = st.sidebar.color_picker("Edge Color", "#808080")
 edge_width = st.sidebar.slider("Edge Width", 0.5, 5.0, 1.0)
 edge_style = st.sidebar.selectbox("Edge Style", ["solid", "dashed", "dotted"], help="Matplotlib linestyle.")
 
+# New: Edge Labels (Experimental for undirected, more typical for directed)
+edge_labels_enabled = st.sidebar.checkbox("Show Edge Labels (Experimental)", False)
+edge_label_color = st.sidebar.color_picker("Edge Label Color", "#555555", disabled=not edge_labels_enabled)
+edge_label_font_size = st.sidebar.slider("Edge Label Font Size", 6, 18, 9, disabled=not edge_labels_enabled)
+
+
 # Label Customization
-st.sidebar.subheader("Labels")
+st.sidebar.subheader("Node Labels")
 font_color = st.sidebar.color_picker("Label Color", "#333333")
 font_size = st.sidebar.slider("Font Size", 8, 24, 12)
 label_bgcolor_enabled = st.sidebar.checkbox("Label Background", False)
 label_bgcolor = st.sidebar.color_picker("Label Background Color", "#FFFFFF", disabled=not label_bgcolor_enabled)
 
+# New: Global Font Family
+font_family = st.sidebar.selectbox("Font Family", ["sans-serif", "serif", "monospace", "fantasy", "cursive"], help="Global font for all labels.")
+
 
 # Plot Background
 st.sidebar.subheader("Plot Background")
 plot_bgcolor = st.sidebar.color_picker("Plot Background Color", "#F0F2F6")
-
-# 3D View Option
-st.sidebar.subheader("3D View (Experimental)")
-enable_3d_view = st.sidebar.checkbox("Enable 3D View (Plotly)", False)
 
 # --- Helper Functions ---
 
@@ -97,7 +95,7 @@ def generate_clique_edges(nodes_list):
     # Sort for consistent edge representation (u,v) where u<v, regardless of input order
     sorted_nodes = sorted(nodes_list, key=str) 
     for u, v in combinations(sorted_nodes, 2):
-        clique_edges.add((u, v)) # Edges are inherently symmetric in undirected graph
+        clique_edges.add(tuple(sorted((u, v), key=str))) # Store as sorted tuple
     return clique_edges
 
 # --- Main Parsing Logic ---
@@ -161,7 +159,7 @@ def parse_sum_term(tokens, index):
             if index < len(tokens) and tokens[index] == ')':
                 index += 1
             else:
-                raise ValueError("Expected ')' after star graph leaves.")
+                raise ValueError("Expected ')' after star graph leaves. For ranges, use `Start+... +End`.")
             
         else: # Standard multiplication (clique formation)
             # Collect all nodes connected by '*'
@@ -201,7 +199,7 @@ def parse_factor(tokens, index):
         index += 1
         return set(), index, {node} # A single node forms no edges on its own
     else:
-        raise ValueError(f"Unexpected token: {current_token} at index {index}. Expected node or '('.")
+        raise ValueError(f"Unexpected token: {current_token} at index {index}. Expected node or '('. For ranges, use `Start+... +End`.")
 
 def parse_leaf_list(tokens, current_index):
     """
@@ -235,7 +233,7 @@ def parse_leaf_list(tokens, current_index):
                     current_index += 5 # Consume: N, +, ..., +, N
                     is_term_parsed = True
                 else:
-                    st.warning(f"💡 Invalid numeric range: {start_token}+...+{end_token}. Start must be <= End.")
+                    st.warning(f"💡 Invalid numeric range: {start_token}+...+{end_token}. Start must be <= End. Check syntax.")
 
             # Alphanumeric range (e.g., A_1+A_2+...+A_10)
             elif re.match(r'^([A-Za-z_]+)(\d+)$', start_token) and \
@@ -255,9 +253,9 @@ def parse_leaf_list(tokens, current_index):
                         current_index += 5 # Consume: X_N, +, ..., +, X_N
                         is_term_parsed = True
                     else:
-                        st.warning(f"💡 Invalid alphanumeric range: {start_token}+...+{end_token}. Start Num <= End Num.")
+                        st.warning(f"💡 Invalid alphanumeric range: {start_token}+...+{end_token}. Start Num <= End Num. Check syntax.")
                 else:
-                    st.warning(f"💡 Mismatched prefixes or invalid format for alphanumeric range: {start_token}+...+{end_token}. ")
+                    st.warning(f"💡 Mismatched prefixes or invalid format for alphanumeric range: {start_token}+...+{end_token}. Check syntax.")
 
         if not is_term_parsed: # If it's not a range, parse as a single leaf term (could be a node or complex expression)
             start_of_leaf_term_index = current_index
@@ -328,7 +326,7 @@ def parse_and_simplify_graph_expression(expr):
         raw_edges, final_index, all_nodes_in_expr = parse_expression(tokens, 0)
         
         if final_index != len(tokens):
-            st.error(f"⚠️ Unparsed tokens remaining after expression: `{''.join(tokens[final_index:])}`. Check your expression syntax. Hint: For ranges, use `Start+... +End`.")
+            st.error(f"⚠️ Unparsed tokens remaining after expression: `{''.join(tokens[final_index:])}`. Check your expression syntax. Hint: For ranges, use `Start+... +End` (e.g., `A*(1+2+...+100)`).")
             return set(), set()
             
         return raw_edges, all_nodes_in_expr
@@ -392,28 +390,26 @@ if st.button("Draw Graph"):
                     num_leaves = len(leaf_nodes)
                     
                     # More robust radius calculation for 2D:
-                    # Scales the radius to better accommodate large numbers of leaves
-                    # A larger base radius (3.0) and a more aggressive scaling factor for `num_leaves**0.4`
-                    # provides more room for labels and prevents extreme compression.
-                    scale_factor = 0.7 # Can be tweaked
-                    radius = 3.0 + (num_leaves**0.4) * scale_factor 
+                    # Adjusted the base radius and scale factor to give more room for larger star graphs
+                    # The `0.45` exponent gives a good balance.
+                    radius = 3.5 + (num_leaves**0.45) * 0.6 
                     
                     sorted_leaf_nodes = sorted(leaf_nodes, key=str) # Consistent order
                     for i, leaf_node in enumerate(sorted_leaf_nodes):
                         # Add a small random jitter to angles to prevent perfect overlaps for very large N
                         # The jitter is now a fraction of the angular separation (e.g., 5%)
-                        jitter_amount = (2 * math.pi / num_leaves) * 0.05 # Max 5% of angular separation
+                        jitter_amount = (2 * math.pi / max(1, num_leaves)) * 0.05 # Max 5% of angular separation, handle num_leaves=0
                         jitter_angle = (random.random() - 0.5) * jitter_amount 
                         
-                        angle = 2 * math.pi * i / num_leaves + jitter_angle
+                        angle = 2 * math.pi * i / max(1, num_leaves) + jitter_angle # Handle num_leaves=0
                         x = radius * math.cos(angle)
                         y = radius * math.sin(angle)
                         pos[leaf_node] = (x, y)
                 elif G.order() > 50:
-                    st.warning(f"Graph has {G.order()} nodes. Visualization might be slow or crowded. Using circular layout.")
+                    st.warning(f"Graph has {G.order()} nodes. Visualization might be slow or crowded. Using circular layout for better spread.")
                     pos = nx.circular_layout(G)
                 else:
-                    pos = nx.spring_layout(G, seed=42)
+                    pos = nx.spring_layout(G, seed=42) # Use a fixed seed for reproducibility
             elif layout_type == "Spring":
                 pos = nx.spring_layout(G, seed=42)
             elif layout_type == "Circular":
@@ -427,145 +423,79 @@ if st.button("Draw Graph"):
 
 
             # --- Plotting ---
-            if enable_3d_view:
-                st.subheader("3D Graph View (Interactive)")
-                # Prepare data for Plotly 3D
-                edge_x = []
-                edge_y = []
-                edge_z = []
+            st.subheader("2D Graph View (Matplotlib)")
+            fig, ax = plt.subplots(figsize=(10, 8)) 
+            fig.patch.set_facecolor(plot_bgcolor) # Set figure background
+            ax.set_facecolor(plot_bgcolor) # Set axes background
 
-                # For 3D star graph, place leaves on a sphere
-                if is_star_graph:
-                    # Center at (0,0,0)
-                    pos_3d = {center_node: (0, 0, 0)}
-                    leaf_nodes_3d = [node for node in G.nodes() if node != center_node]
-                    num_leaves_3d = len(leaf_nodes_3d)
-                    
-                    # Sphere radius: use a slightly different scaling for 3D
-                    sphere_radius = 2.5 + (num_leaves_3d**0.4) * 0.4 # Adjusted 3D radius
-                    
-                    # Distribute leaves on a sphere using Golden Spiral or similar
-                    golden_angle = math.pi * (3 - math.sqrt(5))
-                    for i, leaf_node in enumerate(sorted(leaf_nodes_3d, key=str)):
-                        y = 1 - (i / float(num_leaves_3d - 1)) * 2  # y goes from 1 to -1
-                        radius_at_y = math.sqrt(1 - y * y)
-                        theta = golden_angle * i
-                        x = math.cos(theta) * radius_at_y
-                        z = math.sin(theta) * radius_at_y
-                        pos_3d[leaf_node] = (sphere_radius * x, sphere_radius * y, sphere_radius * z)
-                else:
-                    # For non-star graphs, just project 2D layout onto Z=0 plane
-                    pos_3d = {node: (coords[0], coords[1], 0) for node, coords in pos.items()}
+            nx.draw_networkx_nodes(G, pos,
+                                   node_color=node_color,
+                                   edgecolors=node_border_color,
+                                   linewidths=node_border_width,
+                                   node_shape=node_shape,
+                                   node_size=node_size,
+                                   ax=ax)
+            
+            nx.draw_networkx_edges(G, pos,
+                                   edge_color=edge_color,
+                                   width=edge_width,
+                                   style=edge_style,
+                                   ax=ax)
+            
+            # Draw node labels
+            node_labels = {node: str(node) for node in G.nodes()}
+            texts = nx.draw_networkx_labels(G, pos, labels=node_labels,
+                                            font_size=font_size,
+                                            font_color=font_color,
+                                            font_weight="bold",
+                                            font_family=font_family, # Apply global font family
+                                            ax=ax)
+            
+            # Add label background if enabled (matplotlib specific)
+            if label_bgcolor_enabled:
+                for _, text_obj in texts.items():
+                    text_obj.set_bbox(dict(facecolor=label_bgcolor, edgecolor='none', boxstyle='round,pad=0.2'))
+
+            # Draw edge labels (if enabled)
+            if edge_labels_enabled:
+                edge_labels = {edge: f"({edge[0]},{edge[1]})" for edge in G.edges()} # Example labels
+                nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels,
+                                             font_size=edge_label_font_size,
+                                             font_color=edge_label_color,
+                                             font_family=font_family, # Apply global font family
+                                             ax=ax)
 
 
-                for edge in G.edges():
-                    x0, y0, z0 = pos_3d[edge[0]]
-                    x1, y1, z1 = pos_3d[edge[1]]
-                    edge_x.extend([x0, x1, None])
-                    edge_y.extend([y0, y1, None])
-                    edge_z.extend([z0, z1, None])
+            ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color, fontfamily=font_family)
+            
+            # --- Adjust plot limits to ensure center is indeed centered and all nodes fit ---
+            # Calculate min/max x and y coordinates from node positions
+            if pos: # Ensure pos is not empty
+                all_x = [p[0] for p in pos.values()]
+                all_y = [p[1] for p in pos.values()]
 
-                edge_trace = go.Scatter3d(
-                    x=edge_x, y=edge_y, z=edge_z,
-                    line=dict(width=edge_width, color=edge_color),
-                    hoverinfo='none',
-                    mode='lines'
-                )
-
-                node_x = [pos_3d[node][0] for node in G.nodes()]
-                node_y = [pos_3d[node][1] for node in G.nodes()]
-                node_z = [pos_3d[node][2] for node in G.nodes()]
-                node_text = [str(node) for node in G.nodes()] # For hover labels
-
-                node_trace = go.Scatter3d(
-                    x=node_x, y=node_y, z=node_z,
-                    mode='markers+text',
-                    hoverinfo='text',
-                    text=node_text,
-                    marker=dict(
-                        showscale=False,
-                        color=node_color,
-                        size=node_size/300, # Adjust size for Plotly's scale
-                        line=dict(width=node_border_width/2, color=node_border_color), # Adjust border width
-                        opacity=0.9
-                    ),
-                    textfont=dict(
-                        color=font_color,
-                        size=font_size
-                    ),
-                    textposition="middle center"
-                )
-
-                fig_3d = go.Figure(data=[edge_trace, node_trace])
-                fig_3d.update_layout(
-                    title=f"3D Graph for: `{expr}`",
-                    scene=dict(
-                        xaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
-                        yaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
-                        zaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
-                        aspectmode='data', # Use 'data' for more realistic aspect ratio, 'cube' can distort for non-cube data
-                        bgcolor=plot_bgcolor
-                    ),
-                    margin=dict(l=0, r=0, b=0, t=40),
-                    showlegend=False,
-                    hovermode='closest',
-                    plot_bgcolor=plot_bgcolor # Ensure background matches
-                )
-                st.plotly_chart(fig_3d, use_container_width=True)
-
-            else: # 2D Matplotlib View
-                st.subheader("2D Graph View (Matplotlib)")
-                fig, ax = plt.subplots(figsize=(10, 8)) 
-                ax.set_facecolor(plot_bgcolor) # Set background color
-
-                nx.draw(G, pos,
-                        with_labels=True,
-                        node_color=node_color,
-                        edgecolors=node_border_color, # Node border color
-                        linewidths=node_border_width, # Node border width
-                        node_shape=node_shape, # Node shape
-                        edge_color=edge_color,
-                        width=edge_width, # Edge width
-                        style=edge_style, # Edge style
-                        font_color=font_color,
-                        font_weight="bold",
-                        node_size=node_size,
-                        font_size=font_size,
-                        ax=ax)
+                min_x = min(all_x)
+                max_x = max(all_x)
+                min_y = min(all_y)
+                max_y = max(all_y)
                 
-                # Add label background if enabled (matplotlib specific)
-                if label_bgcolor_enabled:
-                    for node, (x, y) in pos.items():
-                        # Find the corresponding text object
-                        for text_obj in ax.texts:
-                            if text_obj.get_text() == str(node):
-                                text_obj.set_bbox(dict(facecolor=label_bgcolor, edgecolor='none', boxstyle='round,pad=0.2'))
-                                break # Found it, move to next node
-
-                ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color)
+                # Determine a dynamic padding based on the graph's extent
+                # Ensure minimum padding to avoid labels being cut off for small graphs
+                range_x = max_x - min_x
+                range_y = max_y - min_y
                 
-                # --- Adjust plot limits to ensure center is indeed centered and all nodes fit ---
-                # Calculate min/max x and y coordinates from node positions
-                if pos: # Ensure pos is not empty
-                    min_x = min(p[0] for p in pos.values())
-                    max_x = max(p[0] for p in pos.values())
-                    min_y = min(p[1] for p in pos.values())
-                    max_y = max(p[1] for p in pos.values())
-                    
-                    # Determine a dynamic padding based on the graph's extent
-                    # Ensure minimum padding to avoid labels being cut off for small graphs
-                    range_x = max_x - min_x
-                    range_y = max_y - min_y
-                    
-                    # Pad relative to the larger dimension, with a minimum value
-                    # A higher factor might be needed for very large node labels or many nodes
-                    dynamic_padding = max(range_x * 0.15, range_y * 0.15, 1.0) # 15% padding or minimum 1.0
-                    
-                    ax.set_xlim(min_x - dynamic_padding, max_x + dynamic_padding)
-                    ax.set_ylim(min_y - dynamic_padding, max_y + dynamic_padding)
-                    ax.set_aspect('equal', adjustable='box') # Maintain aspect ratio
+                # A larger padding factor might be needed for very large node labels or many nodes
+                # Use a larger factor for star graphs
+                padding_factor = 0.2 if is_star_graph else 0.15 # More padding for star graphs
+                dynamic_padding = max(range_x * padding_factor, range_y * padding_factor, 1.0) # 15-20% padding or minimum 1.0
                 
-                st.pyplot(fig)
+                ax.set_xlim(min_x - dynamic_padding, max_x + dynamic_padding)
+                ax.set_ylim(min_y - dynamic_padding, max_y + dynamic_padding)
+                ax.set_aspect('equal', adjustable='box') # Maintain aspect ratio
+            
+            plt.grid(False) # Turn off grid lines
+            plt.axis('off') # Turn off axes
+            st.pyplot(fig)
 
 # --- Footer ---
 st.markdown("---")
