@@ -6,6 +6,12 @@ from itertools import combinations
 import math
 import plotly.graph_objects as go # For 3D visualization
 
+# --- Installation Instructions (for user) ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 📦 Install Libraries")
+st.sidebar.code("pip install matplotlib plotly streamlit networkx")
+st.sidebar.markdown("---")
+
 # --- Streamlit Page Setup ---
 st.set_page_config(page_title="Algebraic Graph Visualizer", layout="wide") # Changed to wide layout for more space
 st.title("🌟 Algebraic Graph Visualizer (General Graphs) 🌟")
@@ -379,13 +385,17 @@ if st.button("Draw Graph"):
                     pos[center_node] = (0, 0)
                     leaf_nodes = [node for node in G.nodes() if node != center_node]
                     num_leaves = len(leaf_nodes)
-                    # Adjusted radius calculation for better spread
-                    # Radius scales with the square root of num_leaves, ensuring better spacing for large graphs
-                    radius = 1.0 + math.sqrt(num_leaves) * 0.25 # Fine-tuned scaling factor
+                    
+                    # More robust radius calculation:
+                    # Scale based on the cube root of the number of leaves for better distribution
+                    # and ensure a minimum spread.
+                    radius = 2.0 + (num_leaves**0.33) * 0.5 # Further fine-tuned scaling factor
                     
                     sorted_leaf_nodes = sorted(leaf_nodes, key=str) # Consistent order
                     for i, leaf_node in enumerate(sorted_leaf_nodes):
-                        angle = 2 * math.pi * i / num_leaves
+                        # Add a small random jitter to angles to prevent perfect overlaps for very large N
+                        jitter_angle = (random.random() - 0.5) * (2 * math.pi / num_leaves) * 0.1 # Max 10% of angular separation
+                        angle = 2 * math.pi * i / num_leaves + jitter_angle
                         x = radius * math.cos(angle)
                         y = radius * math.sin(angle)
                         pos[leaf_node] = (x, y)
@@ -408,19 +418,43 @@ if st.button("Draw Graph"):
 
             # --- Plotting ---
             if enable_3d_view:
-                st.subheader("3D Graph View")
+                st.subheader("3D Graph View (Interactive)")
                 # Prepare data for Plotly 3D
                 edge_x = []
                 edge_y = []
                 edge_z = []
+
+                # For 3D star graph, place leaves on a sphere
+                if is_star_graph:
+                    # Center at (0,0,0)
+                    pos_3d = {center_node: (0, 0, 0)}
+                    leaf_nodes_3d = [node for node in G.nodes() if node != center_node]
+                    num_leaves_3d = len(leaf_nodes_3d)
+                    
+                    # Sphere radius
+                    sphere_radius = 2.0 + (num_leaves_3d**0.33) * 0.3 # Adjusted 3D radius
+                    
+                    # Distribute leaves on a sphere using Golden Spiral or similar
+                    # This is a common way to evenly distribute points on a sphere
+                    golden_angle = math.pi * (3 - math.sqrt(5))
+                    for i, leaf_node in enumerate(sorted(leaf_nodes_3d, key=str)):
+                        y = 1 - (i / float(num_leaves_3d - 1)) * 2  # y goes from 1 to -1
+                        radius_at_y = math.sqrt(1 - y * y)
+                        theta = golden_angle * i
+                        x = math.cos(theta) * radius_at_y
+                        z = math.sin(theta) * radius_at_y
+                        pos_3d[leaf_node] = (sphere_radius * x, sphere_radius * y, sphere_radius * z)
+                else:
+                    # For non-star graphs, just project 2D layout onto Z=0 plane
+                    pos_3d = {node: (coords[0], coords[1], 0) for node, coords in pos.items()}
+
+
                 for edge in G.edges():
-                    x0, y0 = pos[edge[0]]
-                    x1, y1 = pos[edge[1]]
+                    x0, y0, z0 = pos_3d[edge[0]]
+                    x1, y1, z1 = pos_3d[edge[1]]
                     edge_x.extend([x0, x1, None])
                     edge_y.extend([y0, y1, None])
-                    # For a simple 3D projection from 2D, we can just set z=0
-                    # or apply a simple third dimension if desired
-                    edge_z.extend([0, 0, None]) # Flat in Z, or add more complex 3D positions
+                    edge_z.extend([z0, z1, None])
 
                 edge_trace = go.Scatter3d(
                     x=edge_x, y=edge_y, z=edge_z,
@@ -429,16 +463,10 @@ if st.button("Draw Graph"):
                     mode='lines'
                 )
 
-                node_x = []
-                node_y = []
-                node_z = []
-                node_text = [] # For hover labels
-                for node in G.nodes():
-                    x, y = pos[node]
-                    node_x.append(x)
-                    node_y.append(y)
-                    node_z.append(0) # Flat in Z
-                    node_text.append(str(node))
+                node_x = [pos_3d[node][0] for node in G.nodes()]
+                node_y = [pos_3d[node][1] for node in G.nodes()]
+                node_z = [pos_3d[node][2] for node in G.nodes()]
+                node_text = [str(node) for node in G.nodes()] # For hover labels
 
                 node_trace = go.Scatter3d(
                     x=node_x, y=node_y, z=node_z,
@@ -449,8 +477,7 @@ if st.button("Draw Graph"):
                         showscale=False,
                         color=node_color,
                         size=node_size/300, # Adjust size for Plotly's scale
-                        line_width=node_border_width/2, # Adjust border width
-                        line_color=node_border_color,
+                        line=dict(width=node_border_width/2, color=node_border_color), # Adjust border width
                         opacity=0.9
                     ),
                     textfont=dict(
@@ -467,6 +494,7 @@ if st.button("Draw Graph"):
                         xaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
                         yaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
                         zaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
+                        aspectmode='cube', # Ensure proportional scaling
                         bgcolor=plot_bgcolor
                     ),
                     margin=dict(l=0, r=0, b=0, t=40),
@@ -477,7 +505,7 @@ if st.button("Draw Graph"):
                 st.plotly_chart(fig_3d, use_container_width=True)
 
             else: # 2D Matplotlib View
-                st.subheader("2D Graph View")
+                st.subheader("2D Graph View (Matplotlib)")
                 fig, ax = plt.subplots(figsize=(10, 8)) 
                 ax.set_facecolor(plot_bgcolor) # Set background color
 
@@ -499,13 +527,26 @@ if st.button("Draw Graph"):
                 # Add label background if enabled (matplotlib specific)
                 if label_bgcolor_enabled:
                     for node, (x, y) in pos.items():
-                        # Draw a rectangle behind the text
-                        text = ax.texts[list(G.nodes()).index(node)] # Get the Text object
-                        text.set_bbox(dict(facecolor=label_bgcolor, edgecolor='none', boxstyle='round,pad=0.2'))
+                        # Find the corresponding text object
+                        for text_obj in ax.texts:
+                            if text_obj.get_text() == str(node):
+                                text_obj.set_bbox(dict(facecolor=label_bgcolor, edgecolor='none', boxstyle='round,pad=0.2'))
+                                break # Found it, move to next node
 
                 ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color)
+                # Adjust plot limits to ensure center is indeed centered and all nodes fit
+                min_x = min(p[0] for p in pos.values())
+                max_x = max(p[0] for p in pos.values())
+                min_y = min(p[1] for p in pos.values())
+                max_y = max(p[1] for p in pos.values())
+                
+                padding = max((max_x - min_x) * 0.1, (max_y - min_y) * 0.1, 0.5) # Add 10% padding or minimum 0.5
+                ax.set_xlim(min_x - padding, max_x + padding)
+                ax.set_ylim(min_y - padding, max_y + padding)
+                ax.set_aspect('equal', adjustable='box') # Maintain aspect ratio
                 st.pyplot(fig)
 
 # --- Footer ---
 st.markdown("---")
 st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
+
