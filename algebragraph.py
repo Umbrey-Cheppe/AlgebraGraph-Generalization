@@ -23,7 +23,7 @@ Enter a symbolic expression to generate a graph.
 """)
 
 # --- Input Field ---
-# Changed default example to use the preferred range notation
+# Corrected default example to use the preferred range notation
 expr = st.text_input("Graph Expression:", "A*(1+2+...+10)", help="Try different formats!")
 
 # --- Customization Options ---
