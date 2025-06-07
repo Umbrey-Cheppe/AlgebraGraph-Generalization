@@ -6,35 +6,35 @@ from itertools import combinations
 
 # --- Streamlit Page Setup ---
 st.set_page_config(page_title="Algebraic Graph Visualizer", layout="centered")
-st.title("🌟 Algebraic Graph Visualizer (General Graphs) 🌟")
+st.title("🌟 Algebraic Graph Visualizer 🌟")
 st.markdown("""
 Enter a symbolic expression to generate a graph.
 - `*` for **clique/complete subgraph** (e.g., `a*b`, `1*2*3`).
 - `+` for **graph union** (e.g., `(a*b)+(c*d)`).
-- **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)`).
-- **Range Syntax** `Start...End` (e.g., `1...100` or `v1...v100`).
+- `A*(...)` for a **star graph** with center `A`.
+- `...` for a **range of nodes** (e.g., `1...100` or `v1...v100`).
 
 **Examples:**
 - `a*b*c` (triangle)
-- `1*(2+3+D*E)` (star graph with complex leaf)
-- `A*(1...499)` (large star graph)
-- `v1...v5 + v3*v4` (line graph with an extra edge)
+- `1*(2+3+D*E)` (star graph with a complex leaf)
+- `A*(1...5)` (perfect 5-pointed star graph with center A)
+- `1...5 + 1*3 + 1*4 + 1*5` (a wheel graph)
 """)
 
 # --- Input Field ---
-expr = st.text_input("Graph Expression:", "A*(1...100 + B*C)")
+expr = st.text_input("Graph Expression:", "A*(1...7)")
 
 # --- Customization Options ---
 st.sidebar.header("Graph Customization")
-node_color = st.sidebar.color_picker("Node Color", "#ADD8E6")
-edge_color = st.sidebar.color_picker("Edge Color", "#808080")
-font_color = st.sidebar.color_picker("Label Color", "#333333")
+node_color = st.sidebar.color_picker("Node Color", "#81D4FA")
+edge_color = st.sidebar.color_picker("Edge Color", "#90A4AE")
+font_color = st.sidebar.color_picker("Label Color", "#263238")
 node_size = st.sidebar.slider("Node Size", 100, 5000, 1500)
 font_size = st.sidebar.slider("Font Size", 8, 24, 12)
 
 # --- Helper Functions ---
 
-def parse_nodes(node_str):
+def parse_node(node_str):
     """Converts a node string to int if numeric, else keeps as string."""
     try:
         return int(node_str)
@@ -45,11 +45,9 @@ def generate_clique_edges(nodes_list):
     """Generates edges for a complete graph (clique) given a list of nodes."""
     if len(nodes_list) < 2:
         return set()
-    clique_edges = set()
-    sorted_nodes = sorted(list(nodes_list), key=str)
-    for u, v in combinations(sorted_nodes, 2):
-        clique_edges.add((u, v))
-    return clique_edges
+    # Sort nodes to ensure consistent edge representation, e.g., (1, 2) not (2, 1)
+    sorted_nodes = sorted(list(nodes_list), key=lambda x: str(x))
+    return {tuple(c) for c in combinations(sorted_nodes, 2)}
 
 # --- Main Parsing Logic ---
 
@@ -73,10 +71,10 @@ def parse_term(tokens, index):
     left_edges, index, left_nodes = parse_factor(tokens, index)
 
     if index < len(tokens) and tokens[index] == '*':
-        # Check for Star Graph syntax: A*(...)
+        # Star Graph syntax: A*(...)
         if index + 1 < len(tokens) and tokens[index+1] == '(':
             if len(left_nodes) != 1:
-                raise ValueError("Star graph center must be a single node.")
+                raise ValueError(f"Star graph center must be a single node, but found term '{left_nodes}'.")
             center_node = list(left_nodes)[0]
             index += 2 # Consume '*' and '('
             
@@ -86,21 +84,23 @@ def parse_term(tokens, index):
                 raise ValueError("Expected ')' to close star graph leaves.")
             index += 1 # Consume ')'
 
-            star_edges = {tuple(sorted((center_node, leaf), key=str)) for leaf in leaf_nodes if center_node != leaf}
+            star_edges = {tuple(sorted((center_node, leaf), key=lambda x: str(x))) for leaf in leaf_nodes if center_node != leaf}
             
+            # Combine the edges from within the leaves with the new star edges
             left_edges.update(leaf_edges)
             left_edges.update(star_edges)
             left_nodes.update(leaf_nodes)
             return left_edges, index, left_nodes
         
-        # Otherwise, it's a standard clique
+        # Standard clique: a*b*c
         else:
             clique_nodes = set(left_nodes)
             while index < len(tokens) and tokens[index] == '*':
                 index += 1
+                # The right-hand side of a clique must be a simple factor
                 sub_edges, index, sub_nodes = parse_factor(tokens, index)
                 if sub_edges:
-                     raise ValueError("Cannot multiply complex expressions. Use '+' for union.")
+                     raise ValueError(f"Cannot form a clique with a complex expression. Use '+' for union.")
                 clique_nodes.update(sub_nodes)
             
             clique_edges = generate_clique_edges(clique_nodes)
@@ -109,9 +109,11 @@ def parse_term(tokens, index):
     return left_edges, index, left_nodes
 
 def parse_factor(tokens, index):
-    """Parses ranges, parentheses, or single nodes."""
-    # Check for range syntax: A...B
-    # This must be checked before single node parsing.
+    """Parses ranges, parentheses, or single nodes (highest precedence)."""
+    if not tokens or index >= len(tokens):
+        return set(), index, set()
+        
+    # Check for range syntax first: A...B
     is_range = (index + 2 < len(tokens) and
                 re.match(r'[A-Za-z0-9_]+', tokens[index]) and
                 tokens[index+1] == '...' and
@@ -120,14 +122,14 @@ def parse_factor(tokens, index):
     if is_range:
         start_node_str = tokens[index]
         end_node_str = tokens[index+2]
-        all_nodes = set()
+        nodes_in_range = set()
         
         # Numeric range: "1"..."100"
         if start_node_str.isdigit() and end_node_str.isdigit():
             start, end = int(start_node_str), int(end_node_str)
-            if start > end: raise ValueError(f"Range start cannot be > end.")
+            if start > end: raise ValueError(f"Range start '{start}' cannot be greater than end '{end}'.")
             for i in range(start, end + 1):
-                all_nodes.add(i)
+                nodes_in_range.add(i)
         else:
             # Alphanumeric range: "v1"..."v100"
             match_start = re.match(r'^([A-Za-z_]*)(\d+)$', start_node_str)
@@ -135,43 +137,43 @@ def parse_factor(tokens, index):
             if match_start and match_end:
                 p1, n1 = match_start.groups()
                 p2, n2 = match_end.groups()
-                if p1 != p2: raise ValueError(f"Range prefixes must match.")
+                if p1 != p2: raise ValueError(f"Range prefixes must match: '{p1}' vs '{p2}'.")
                 start, end = int(n1), int(n2)
-                if start > end: raise ValueError(f"Range start cannot be > end.")
+                if start > end: raise ValueError(f"Range start '{start}' cannot be greater than end '{end}'.")
                 for i in range(start, end + 1):
-                    all_nodes.add(f"{p1}{i}")
+                    nodes_in_range.add(f"{p1}{i}")
             else:
-                raise ValueError(f"Unsupported range: {start_node_str}...{end_node_str}")
+                raise ValueError(f"Unsupported range format: {start_node_str}...{end_node_str}")
         
-        # A range creates a path graph (edges between consecutive nodes)
-        sorted_range_nodes = sorted(list(all_nodes), key=str)
-        edges = {tuple(sorted_range_nodes[i:i+2]) for i in range(len(sorted_range_nodes)-1)}
-        return edges, index + 3, all_nodes
+        # **CORRECTED LOGIC**: A range now produces NO edges, just a set of nodes.
+        return set(), index + 3, nodes_in_range
 
-    # Check for parentheses
+    # Parenthesized expression: (A*B+C)
     if tokens[index] == '(':
         index += 1
         edges, index, nodes = parse_expression(tokens, index)
         if index >= len(tokens) or tokens[index] != ')':
-            raise ValueError("Mismatched parentheses.")
+            raise ValueError("Mismatched parentheses: expected ')' to close an expression.")
         index += 1
         return edges, index, nodes
         
-    # Check for single node
+    # Single node: A
     if re.match(r'[A-Za-z0-9_]+', tokens[index]):
-        node = parse_nodes(tokens[index])
+        node = parse_node(tokens[index])
         return set(), index + 1, {node}
 
-    raise ValueError(f"Unexpected token: {tokens[index]}")
+    raise ValueError(f"Unexpected token in expression: '{tokens[index]}'")
 
-# --- Main Driver Function ---
+# --- Main Driver ---
 def run_parser(expr_str):
     if not expr_str:
         return set(), set()
     tokens = tokenize(expr_str.replace(" ", ""))
+    if not tokens:
+        return set(), set()
     edges, final_index, nodes = parse_expression(tokens, 0)
     if final_index != len(tokens):
-        st.warning(f"Warning: Could not parse entire string. Unparsed part: `{''.join(tokens[final_index:])}`")
+        st.warning(f"Could not parse entire string. Unparsed part: `{''.join(tokens[final_index:])}`")
     return edges, nodes
 
 # --- Draw Button and Logic ---
@@ -188,11 +190,11 @@ if st.button("Draw Graph"):
             else:
                 fig, ax = plt.subplots(figsize=(12, 10))
                 
-                # Choose layout based on graph size
+                # Choose layout based on graph size and structure
                 if G.number_of_nodes() > 100:
                     pos = nx.circular_layout(G)
                 else:
-                    pos = nx.spring_layout(G, seed=42, k=0.8) # k adjusts spacing
+                    pos = nx.spring_layout(G, seed=42, k=0.9, iterations=50)
                     
                 nx.draw(G, pos,
                         ax=ax,
