@@ -3,10 +3,11 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import re
 from itertools import combinations
-import math # Import math for sin, cos, pi
+import math
+import plotly.graph_objects as go # For 3D visualization
 
 # --- Streamlit Page Setup ---
-st.set_page_config(page_title="Algebraic Graph Visualizer", layout="centered")
+st.set_page_config(page_title="Algebraic Graph Visualizer", layout="wide") # Changed to wide layout for more space
 st.title("🌟 Algebraic Graph Visualizer (General Graphs) 🌟")
 st.markdown("""
 Enter a symbolic expression to generate a graph.
@@ -24,16 +25,48 @@ Enter a symbolic expression to generate a graph.
 """)
 
 # --- Input Field ---
-# Corrected default example to use the preferred range notation
-expr = st.text_input("Graph Expression:", "A*(1+2+...+10)", help="Try different formats!")
+expr = st.text_input("Graph Expression:", "A*(1+2+...+100)", help="Try different formats!") # Default to a large star graph
 
-# --- Customization Options ---
+# --- Customization Options (Sidebar) ---
 st.sidebar.header("Graph Customization")
+
+# Layout Selection
+layout_type = st.sidebar.selectbox(
+    "Layout Algorithm",
+    ("Auto (Spring/Star/Circular)", "Spring", "Circular", "Kamada-Kawai", "Spectral", "Shell"),
+    help="Choose a layout algorithm. 'Auto' tries to optimize for star graphs."
+)
+
+# Node Customization
+st.sidebar.subheader("Nodes")
 node_color = st.sidebar.color_picker("Node Color", "#ADD8E6")
-edge_color = st.sidebar.color_picker("Edge Color", "#808080")
-font_color = st.sidebar.color_picker("Label Color", "#333333")
 node_size = st.sidebar.slider("Node Size", 100, 5000, 2000)
+node_shape = st.sidebar.selectbox("Node Shape", ["o", "s", "D", "^", "v", "h"], format_func=lambda x: {"o":"Circle", "s":"Square", "D":"Diamond", "^":"Triangle Up", "v":"Triangle Down", "h":"Hexagon"}[x], help="Matplotlib marker style.")
+node_border_color = st.sidebar.color_picker("Node Border Color", "#000000")
+node_border_width = st.sidebar.slider("Node Border Width", 0.0, 5.0, 1.0)
+
+
+# Edge Customization
+st.sidebar.subheader("Edges")
+edge_color = st.sidebar.color_picker("Edge Color", "#808080")
+edge_width = st.sidebar.slider("Edge Width", 0.5, 5.0, 1.0)
+edge_style = st.sidebar.selectbox("Edge Style", ["solid", "dashed", "dotted"], help="Matplotlib linestyle.")
+
+# Label Customization
+st.sidebar.subheader("Labels")
+font_color = st.sidebar.color_picker("Label Color", "#333333")
 font_size = st.sidebar.slider("Font Size", 8, 24, 12)
+label_bgcolor_enabled = st.sidebar.checkbox("Label Background", False)
+label_bgcolor = st.sidebar.color_picker("Label Background Color", "#FFFFFF", disabled=not label_bgcolor_enabled)
+
+
+# Plot Background
+st.sidebar.subheader("Plot Background")
+plot_bgcolor = st.sidebar.color_picker("Plot Background Color", "#F0F2F6")
+
+# 3D View Option
+st.sidebar.subheader("3D View (Experimental)")
+enable_3d_view = st.sidebar.checkbox("Enable 3D View (Plotly)", False)
 
 # --- Helper Functions ---
 
@@ -308,37 +341,27 @@ if st.button("Draw Graph"):
         final_edges_for_nx = []
         for u, v in edges_to_draw:
             if u != v:
-                final_edges_for_nx.append(tuple(sorted((u,v), key=str))) # Ensure consistent edge order for set comparison
+                final_edges_for_nx.append(tuple(sorted((u,v), key=str))) 
         
         # --- Create Graph ---
         G = nx.Graph()
-        
-        # Add all nodes identified during parsing, ensuring isolated nodes are included
         G.add_nodes_from(list(all_nodes_in_expr))
-        
-        # Add filtered edges
         G.add_edges_from(final_edges_for_nx)
         
         # --- Visualization ---
-        if not G.nodes(): # No nodes at all after processing
+        if not G.nodes(): 
             st.info("The expression resulted in no visible graph (possibly empty or only filtered self-loops).")
             st.warning("Consider an expression that creates distinct connections, like `1*(2+3)` or `a*b`.")
         else:
-            # --- Custom Layout for Star Graphs ---
+            # --- Star Graph Detection (for custom layout) ---
             is_star_graph = False
             center_node = None
-            if G.order() > 1: # A star graph needs at least 2 nodes
+            if G.order() > 1:
                 degrees = dict(G.degree())
-                
-                # A graph is a perfect star graph if one node is connected to all others (degree N-1)
-                # and all other nodes are only connected to this center node (degree 1).
-                
                 potential_centers = [node for node, degree in degrees.items() if degree == G.order() - 1]
                 
-                if len(potential_centers) == 1: # Found exactly one node connected to all others
+                if len(potential_centers) == 1:
                     center_node = potential_centers[0]
-                    
-                    # Verify all other nodes are leaves (degree 1)
                     all_others_are_leaves = True
                     for node, degree in degrees.items():
                         if node != center_node and degree != 1:
@@ -347,50 +370,141 @@ if st.button("Draw Graph"):
                     if all_others_are_leaves:
                         is_star_graph = True
             
-            pos = {}
-            if is_star_graph:
-                st.info("Detected star graph. Using custom radial layout for clear center display.")
-                # Place center node at (0,0)
-                pos[center_node] = (0, 0)
-                
-                # Place other nodes (leaves) in a circle around the center
-                leaf_nodes = [node for node in G.nodes() if node != center_node]
-                num_leaves = len(leaf_nodes)
-                # Adjust radius based on number of nodes to ensure spacing
-                # Larger graphs might need a larger radius or smaller node sizes
-                radius = 1.0 + (num_leaves * 0.005) # Dynamically adjust radius slightly
-                
-                # Sort leaf nodes for consistent drawing order
-                sorted_leaf_nodes = sorted(leaf_nodes, key=str)
+            pos = {} # Initialize position dictionary
 
-                for i, leaf_node in enumerate(sorted_leaf_nodes):
-                    # Distribute nodes evenly in a circle
-                    angle = 2 * math.pi * i / num_leaves
-                    x = radius * math.cos(angle)
-                    y = radius * math.sin(angle)
-                    pos[leaf_node] = (x, y)
-            else:
-                # Use standard layouts for other graph types or large graphs
-                if G.order() > 50:
+            # Determine layout based on user selection or auto mode
+            if layout_type == "Auto (Spring/Star/Circular)":
+                if is_star_graph:
+                    st.info("Detected star graph. Using custom radial layout for clear center display.")
+                    pos[center_node] = (0, 0)
+                    leaf_nodes = [node for node in G.nodes() if node != center_node]
+                    num_leaves = len(leaf_nodes)
+                    # Adjusted radius calculation for better spread
+                    # Radius scales with the square root of num_leaves, ensuring better spacing for large graphs
+                    radius = 1.0 + math.sqrt(num_leaves) * 0.25 # Fine-tuned scaling factor
+                    
+                    sorted_leaf_nodes = sorted(leaf_nodes, key=str) # Consistent order
+                    for i, leaf_node in enumerate(sorted_leaf_nodes):
+                        angle = 2 * math.pi * i / num_leaves
+                        x = radius * math.cos(angle)
+                        y = radius * math.sin(angle)
+                        pos[leaf_node] = (x, y)
+                elif G.order() > 50:
                     st.warning(f"Graph has {G.order()} nodes. Visualization might be slow or crowded. Using circular layout.")
                     pos = nx.circular_layout(G)
                 else:
-                    pos = nx.spring_layout(G, seed=42) # Consistent layout
-            
-            fig, ax = plt.subplots(figsize=(10, 8)) # Increased figsize for larger graphs
-            
-            nx.draw(G, pos,
-                    with_labels=True,
-                    node_color=node_color,
-                    edge_color=edge_color,
-                    font_color=font_color,
-                    font_weight="bold",
-                    node_size=node_size,
-                    font_size=font_size,
-                    ax=ax)
-            
-            ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color)
-            st.pyplot(fig)
+                    pos = nx.spring_layout(G, seed=42)
+            elif layout_type == "Spring":
+                pos = nx.spring_layout(G, seed=42)
+            elif layout_type == "Circular":
+                pos = nx.circular_layout(G)
+            elif layout_type == "Kamada-Kawai":
+                pos = nx.kamada_kawai_layout(G)
+            elif layout_type == "Spectral":
+                pos = nx.spectral_layout(G)
+            elif layout_type == "Shell":
+                pos = nx.shell_layout(G)
+
+
+            # --- Plotting ---
+            if enable_3d_view:
+                st.subheader("3D Graph View")
+                # Prepare data for Plotly 3D
+                edge_x = []
+                edge_y = []
+                edge_z = []
+                for edge in G.edges():
+                    x0, y0 = pos[edge[0]]
+                    x1, y1 = pos[edge[1]]
+                    edge_x.extend([x0, x1, None])
+                    edge_y.extend([y0, y1, None])
+                    # For a simple 3D projection from 2D, we can just set z=0
+                    # or apply a simple third dimension if desired
+                    edge_z.extend([0, 0, None]) # Flat in Z, or add more complex 3D positions
+
+                edge_trace = go.Scatter3d(
+                    x=edge_x, y=edge_y, z=edge_z,
+                    line=dict(width=edge_width, color=edge_color),
+                    hoverinfo='none',
+                    mode='lines'
+                )
+
+                node_x = []
+                node_y = []
+                node_z = []
+                node_text = [] # For hover labels
+                for node in G.nodes():
+                    x, y = pos[node]
+                    node_x.append(x)
+                    node_y.append(y)
+                    node_z.append(0) # Flat in Z
+                    node_text.append(str(node))
+
+                node_trace = go.Scatter3d(
+                    x=node_x, y=node_y, z=node_z,
+                    mode='markers+text',
+                    hoverinfo='text',
+                    text=node_text,
+                    marker=dict(
+                        showscale=False,
+                        color=node_color,
+                        size=node_size/300, # Adjust size for Plotly's scale
+                        line_width=node_border_width/2, # Adjust border width
+                        line_color=node_border_color,
+                        opacity=0.9
+                    ),
+                    textfont=dict(
+                        color=font_color,
+                        size=font_size
+                    ),
+                    textposition="middle center"
+                )
+
+                fig_3d = go.Figure(data=[edge_trace, node_trace])
+                fig_3d.update_layout(
+                    title=f"3D Graph for: `{expr}`",
+                    scene=dict(
+                        xaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
+                        yaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
+                        zaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
+                        bgcolor=plot_bgcolor
+                    ),
+                    margin=dict(l=0, r=0, b=0, t=40),
+                    showlegend=False,
+                    hovermode='closest',
+                    plot_bgcolor=plot_bgcolor # Ensure background matches
+                )
+                st.plotly_chart(fig_3d, use_container_width=True)
+
+            else: # 2D Matplotlib View
+                st.subheader("2D Graph View")
+                fig, ax = plt.subplots(figsize=(10, 8)) 
+                ax.set_facecolor(plot_bgcolor) # Set background color
+
+                nx.draw(G, pos,
+                        with_labels=True,
+                        node_color=node_color,
+                        edgecolors=node_border_color, # Node border color
+                        linewidths=node_border_width, # Node border width
+                        node_shape=node_shape, # Node shape
+                        edge_color=edge_color,
+                        width=edge_width, # Edge width
+                        style=edge_style, # Edge style
+                        font_color=font_color,
+                        font_weight="bold",
+                        node_size=node_size,
+                        font_size=font_size,
+                        ax=ax)
+                
+                # Add label background if enabled (matplotlib specific)
+                if label_bgcolor_enabled:
+                    for node, (x, y) in pos.items():
+                        # Draw a rectangle behind the text
+                        text = ax.texts[list(G.nodes()).index(node)] # Get the Text object
+                        text.set_bbox(dict(facecolor=label_bgcolor, edgecolor='none', boxstyle='round,pad=0.2'))
+
+                ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color)
+                st.pyplot(fig)
 
 # --- Footer ---
 st.markdown("---")
