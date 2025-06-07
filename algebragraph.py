@@ -17,12 +17,12 @@ Enter a symbolic expression to generate a graph.
 **Examples:**
 - `a*b*c` (triangle)
 - `1*(2+3+D*E)` (star graph with a complex leaf)
-- `A*(1...5)` (perfect 5-pointed star graph with center A)
+- `A*(1...10)` (perfect 10-pointed star graph)
 - `1...5 + 1*3 + 1*4 + 1*5` (a wheel graph)
 """)
 
 # --- Input Field ---
-expr = st.text_input("Graph Expression:", "A*(1...7)")
+expr = st.text_input("Graph Expression:", "A*(1...10)")
 
 # --- Customization Options ---
 st.sidebar.header("Graph Customization")
@@ -145,7 +145,7 @@ def parse_factor(tokens, index):
             else:
                 raise ValueError(f"Unsupported range format: {start_node_str}...{end_node_str}")
         
-        # **CORRECTED LOGIC**: A range now produces NO edges, just a set of nodes.
+        # A range now produces NO edges, just a set of nodes.
         return set(), index + 3, nodes_in_range
 
     # Parenthesized expression: (A*B+C)
