@@ -8,7 +8,7 @@ import random # For random jitter in layout
 
 # --- Streamlit Page Setup ---
 st.set_page_config(page_title="Algebraic Graph Visualizer", layout="wide")
-st.title("🌟 Algebraic Graph Visualizer (General Graphs) 🌟")
+st.title("Algebraic Graph Visualizer (Simple Graphs)")
 st.markdown("""
 Enter a symbolic expression to generate a graph.
 - `*` for **clique/complete subgraph** (e.g., `a*b` for edge, `1*2*3` for triangle on 1,2,3). Order doesn't matter (associative, commutative).
@@ -570,5 +570,5 @@ if st.button("Draw Graph"):
 
 # --- Footer ---
 st.markdown("---")
-st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
+st.info("This app visualizes general simple graphs based on algebraic expressions defined for Semiring of Graphs / Zykov Algebra. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
 
