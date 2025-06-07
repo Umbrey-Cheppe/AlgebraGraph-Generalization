@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import networkx as nx
 import re
 from itertools import combinations
+import math # Import math for sin, cos, pi
 
 # --- Streamlit Page Setup ---
 st.set_page_config(page_title="Algebraic Graph Visualizer", layout="centered")
@@ -307,7 +308,7 @@ if st.button("Draw Graph"):
         final_edges_for_nx = []
         for u, v in edges_to_draw:
             if u != v:
-                final_edges_for_nx.append((u, v))
+                final_edges_for_nx.append(tuple(sorted((u,v), key=str))) # Ensure consistent edge order for set comparison
         
         # --- Create Graph ---
         G = nx.Graph()
@@ -323,13 +324,58 @@ if st.button("Draw Graph"):
             st.info("The expression resulted in no visible graph (possibly empty or only filtered self-loops).")
             st.warning("Consider an expression that creates distinct connections, like `1*(2+3)` or `a*b`.")
         else:
-            # If the graph is very large (e.g., 100 nodes), spring_layout might be slow
-            # or result in an unreadable tangle. Max nodes for visualization is a practical limit.
-            if G.order() > 50: # If more than 50 nodes, use a simpler layout or warn
-                st.warning(f"Graph has {G.order()} nodes. Visualization might be slow or crowded. Using circular layout.")
-                pos = nx.circular_layout(G)
+            # --- Custom Layout for Star Graphs ---
+            is_star_graph = False
+            center_node = None
+            if G.order() > 1: # A star graph needs at least 2 nodes
+                degrees = dict(G.degree())
+                
+                # A graph is a perfect star graph if one node is connected to all others (degree N-1)
+                # and all other nodes are only connected to this center node (degree 1).
+                
+                potential_centers = [node for node, degree in degrees.items() if degree == G.order() - 1]
+                
+                if len(potential_centers) == 1: # Found exactly one node connected to all others
+                    center_node = potential_centers[0]
+                    
+                    # Verify all other nodes are leaves (degree 1)
+                    all_others_are_leaves = True
+                    for node, degree in degrees.items():
+                        if node != center_node and degree != 1:
+                            all_others_are_leaves = False
+                            break
+                    if all_others_are_leaves:
+                        is_star_graph = True
+            
+            pos = {}
+            if is_star_graph:
+                st.info("Detected star graph. Using custom radial layout for clear center display.")
+                # Place center node at (0,0)
+                pos[center_node] = (0, 0)
+                
+                # Place other nodes (leaves) in a circle around the center
+                leaf_nodes = [node for node in G.nodes() if node != center_node]
+                num_leaves = len(leaf_nodes)
+                # Adjust radius based on number of nodes to ensure spacing
+                # Larger graphs might need a larger radius or smaller node sizes
+                radius = 1.0 + (num_leaves * 0.005) # Dynamically adjust radius slightly
+                
+                # Sort leaf nodes for consistent drawing order
+                sorted_leaf_nodes = sorted(leaf_nodes, key=str)
+
+                for i, leaf_node in enumerate(sorted_leaf_nodes):
+                    # Distribute nodes evenly in a circle
+                    angle = 2 * math.pi * i / num_leaves
+                    x = radius * math.cos(angle)
+                    y = radius * math.sin(angle)
+                    pos[leaf_node] = (x, y)
             else:
-                pos = nx.spring_layout(G, seed=42) # Consistent layout
+                # Use standard layouts for other graph types or large graphs
+                if G.order() > 50:
+                    st.warning(f"Graph has {G.order()} nodes. Visualization might be slow or crowded. Using circular layout.")
+                    pos = nx.circular_layout(G)
+                else:
+                    pos = nx.spring_layout(G, seed=42) # Consistent layout
             
             fig, ax = plt.subplots(figsize=(10, 8)) # Increased figsize for larger graphs
             
