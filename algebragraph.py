@@ -5,6 +5,7 @@ import re
 from itertools import combinations
 import math
 import plotly.graph_objects as go # For 3D visualization
+import random # <--- Added this import for random jitter
 
 # --- Installation Instructions (for user) ---
 st.sidebar.markdown("---")
@@ -19,7 +20,11 @@ st.markdown("""
 Enter a symbolic expression to generate a graph.
 - `*` for **clique/complete subgraph** (e.g., `a*b` for edge, `1*2*3` for triangle on 1,2,3). Order doesn't matter (associative, commutative).
 - `+` for **graph union** (e.g., `(a*b)+(c*d)`). Follows absorption law `G_sup + G_sub = G_sup`.
-- **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)` or `Center*(Leaf1+Leaf2+...+LeafN)`). `Center` connects to individual nodes of leaves, and complex leaves (`D*E`) form their own cliques.
+- **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)` or `Center*(Leaf1+Leaf2+...+LeafN)`).
+  - `Center` connects to individual nodes of leaves.
+  - Complex leaves (`D*E`) form their own cliques.
+  - **Important for Ranges:** For numerical ranges, use `Start + ... + End` (e.g., `A*(1+2+...+100)`). The `+` signs around `...` are necessary.
+  - **Important for Ranges:** For alphanumeric ranges, use `Prefix_StartNum + ... + Prefix_EndNum` (e.g., `X_1+X_2+...+X_10`).
 
 **Examples:**
 - `a*b*c` (triangle on a,b,c)
@@ -323,7 +328,7 @@ def parse_and_simplify_graph_expression(expr):
         raw_edges, final_index, all_nodes_in_expr = parse_expression(tokens, 0)
         
         if final_index != len(tokens):
-            st.error(f"⚠️ Unparsed tokens remaining after expression: `{''.join(tokens[final_index:])}`. Check your expression syntax.")
+            st.error(f"⚠️ Unparsed tokens remaining after expression: `{''.join(tokens[final_index:])}`. Check your expression syntax. Hint: For ranges, use `Start+... +End`.")
             return set(), set()
             
         return raw_edges, all_nodes_in_expr
@@ -386,15 +391,20 @@ if st.button("Draw Graph"):
                     leaf_nodes = [node for node in G.nodes() if node != center_node]
                     num_leaves = len(leaf_nodes)
                     
-                    # More robust radius calculation:
-                    # Scale based on the cube root of the number of leaves for better distribution
-                    # and ensure a minimum spread.
-                    radius = 2.0 + (num_leaves**0.33) * 0.5 # Further fine-tuned scaling factor
+                    # More robust radius calculation for 2D:
+                    # Scales the radius to better accommodate large numbers of leaves
+                    # A larger base radius (3.0) and a more aggressive scaling factor for `num_leaves**0.4`
+                    # provides more room for labels and prevents extreme compression.
+                    scale_factor = 0.7 # Can be tweaked
+                    radius = 3.0 + (num_leaves**0.4) * scale_factor 
                     
                     sorted_leaf_nodes = sorted(leaf_nodes, key=str) # Consistent order
                     for i, leaf_node in enumerate(sorted_leaf_nodes):
                         # Add a small random jitter to angles to prevent perfect overlaps for very large N
-                        jitter_angle = (random.random() - 0.5) * (2 * math.pi / num_leaves) * 0.1 # Max 10% of angular separation
+                        # The jitter is now a fraction of the angular separation (e.g., 5%)
+                        jitter_amount = (2 * math.pi / num_leaves) * 0.05 # Max 5% of angular separation
+                        jitter_angle = (random.random() - 0.5) * jitter_amount 
+                        
                         angle = 2 * math.pi * i / num_leaves + jitter_angle
                         x = radius * math.cos(angle)
                         y = radius * math.sin(angle)
@@ -431,11 +441,10 @@ if st.button("Draw Graph"):
                     leaf_nodes_3d = [node for node in G.nodes() if node != center_node]
                     num_leaves_3d = len(leaf_nodes_3d)
                     
-                    # Sphere radius
-                    sphere_radius = 2.0 + (num_leaves_3d**0.33) * 0.3 # Adjusted 3D radius
+                    # Sphere radius: use a slightly different scaling for 3D
+                    sphere_radius = 2.5 + (num_leaves_3d**0.4) * 0.4 # Adjusted 3D radius
                     
                     # Distribute leaves on a sphere using Golden Spiral or similar
-                    # This is a common way to evenly distribute points on a sphere
                     golden_angle = math.pi * (3 - math.sqrt(5))
                     for i, leaf_node in enumerate(sorted(leaf_nodes_3d, key=str)):
                         y = 1 - (i / float(num_leaves_3d - 1)) * 2  # y goes from 1 to -1
@@ -494,7 +503,7 @@ if st.button("Draw Graph"):
                         xaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
                         yaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
                         zaxis=dict(showbackground=False, showticklabels=False, showgrid=False, zeroline=False),
-                        aspectmode='cube', # Ensure proportional scaling
+                        aspectmode='data', # Use 'data' for more realistic aspect ratio, 'cube' can distort for non-cube data
                         bgcolor=plot_bgcolor
                     ),
                     margin=dict(l=0, r=0, b=0, t=40),
@@ -534,16 +543,28 @@ if st.button("Draw Graph"):
                                 break # Found it, move to next node
 
                 ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color)
-                # Adjust plot limits to ensure center is indeed centered and all nodes fit
-                min_x = min(p[0] for p in pos.values())
-                max_x = max(p[0] for p in pos.values())
-                min_y = min(p[1] for p in pos.values())
-                max_y = max(p[1] for p in pos.values())
                 
-                padding = max((max_x - min_x) * 0.1, (max_y - min_y) * 0.1, 0.5) # Add 10% padding or minimum 0.5
-                ax.set_xlim(min_x - padding, max_x + padding)
-                ax.set_ylim(min_y - padding, max_y + padding)
-                ax.set_aspect('equal', adjustable='box') # Maintain aspect ratio
+                # --- Adjust plot limits to ensure center is indeed centered and all nodes fit ---
+                # Calculate min/max x and y coordinates from node positions
+                if pos: # Ensure pos is not empty
+                    min_x = min(p[0] for p in pos.values())
+                    max_x = max(p[0] for p in pos.values())
+                    min_y = min(p[1] for p in pos.values())
+                    max_y = max(p[1] for p in pos.values())
+                    
+                    # Determine a dynamic padding based on the graph's extent
+                    # Ensure minimum padding to avoid labels being cut off for small graphs
+                    range_x = max_x - min_x
+                    range_y = max_y - min_y
+                    
+                    # Pad relative to the larger dimension, with a minimum value
+                    # A higher factor might be needed for very large node labels or many nodes
+                    dynamic_padding = max(range_x * 0.15, range_y * 0.15, 1.0) # 15% padding or minimum 1.0
+                    
+                    ax.set_xlim(min_x - dynamic_padding, max_x + dynamic_padding)
+                    ax.set_ylim(min_y - dynamic_padding, max_y + dynamic_padding)
+                    ax.set_aspect('equal', adjustable='box') # Maintain aspect ratio
+                
                 st.pyplot(fig)
 
 # --- Footer ---
