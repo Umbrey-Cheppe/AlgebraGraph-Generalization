@@ -44,7 +44,8 @@ layout_type = st.sidebar.selectbox(
 # Node Customization
 st.sidebar.subheader("Nodes")
 node_color = st.sidebar.color_picker("Node Color", "#ADD8E6")
-node_size = st.sidebar.slider("Node Size", 100, 5000, 2000)
+# Default node size changed to 1000 for a more "normal" appearance
+node_size = st.sidebar.slider("Node Size", 100, 5000, 1000) 
 node_shape = st.sidebar.selectbox("Node Shape", ["o", "s", "D", "^", "v", "h"], format_func=lambda x: {"o":"Circle", "s":"Square", "D":"Diamond", "^":"Triangle Up", "v":"Triangle Down", "h":"Hexagon"}[x], help="Matplotlib marker style.")
 node_border_color = st.sidebar.color_picker("Node Border Color", "#000000")
 node_border_width = st.sidebar.slider("Node Border Width", 0.0, 5.0, 1.0)
@@ -159,7 +160,7 @@ def parse_sum_term(tokens, index):
             if index < len(tokens) and tokens[index] == ')':
                 index += 1
             else:
-                raise ValueError("Expected ')' after star graph leaves. For ranges, use `Start+... +End` (e.g., `A*(1+2+...+100)`).")
+                raise ValueError("Expected ')' after star graph leaves. For numerical ranges, you MUST use `Start+... +End` (e.g., `A*(1+2+...+100)`). The `+` signs around `...` are crucial.")
             
         else: # Standard multiplication (clique formation)
             # Collect all nodes connected by '*'
@@ -193,13 +194,13 @@ def parse_factor(tokens, index):
             index += 1 # Consume ')'
             return edges, index, nodes
         else:
-            raise ValueError("Mismatched parentheses: Expected ')'")
+            raise ValueError("Mismatched parentheses: Expected ')'.")
     elif re.match(r'[A-Za-z0-9_]+', current_token): # It's a node
         node = parse_nodes(current_token)
         index += 1
         return set(), index, {node} # A single node forms no edges on its own
     else:
-        raise ValueError(f"Unexpected token: `{current_token}` at index {index}. Expected node or '('. For ranges, use `Start+... +End`.")
+        raise ValueError(f"Unexpected token: `{current_token}` at index {index}. Expected node or '('. For numerical ranges, use `Start+... +End`.")
 
 def parse_leaf_list(tokens, current_index):
     """
@@ -369,7 +370,7 @@ if st.button("Draw Graph"):
             # --- Star Graph Detection (for custom layout) ---
             is_star_graph = False
             center_node = None
-            if G.order() > 1:
+            if G.order() > 1: # G.order() is number of nodes
                 degrees = dict(G.degree())
                 # A node is a center of a star graph if its degree is N-1 (connected to all other N-1 nodes)
                 potential_centers = [node for node, degree in degrees.items() if degree == G.order() - 1]
@@ -390,26 +391,58 @@ if st.button("Draw Graph"):
             # Determine layout based on user selection or auto mode
             if layout_type == "Auto (Spring/Star/Circular)":
                 if is_star_graph:
-                    st.info("Detected star graph. Using custom radial layout for clear center display.")
+                    st.info("Detected star graph. Using custom radial multi-ring layout for clear center display.")
                     pos[center_node] = (0, 0) # Center node at origin
                     leaf_nodes = [node for node in G.nodes() if node != center_node]
                     num_leaves = len(leaf_nodes)
-                    
-                    # Refined radius calculation for 2D star graphs
-                    # Adjusted scaling to account for the larger number of nodes like 100
-                    # The base `4.0` gives more room, and `0.5` exponent provides aggressive scaling.
-                    radius = 4.0 + (num_leaves**0.5) * 0.7 # Further adjusted: higher base, higher exponent for better spread
-                    
                     sorted_leaf_nodes = sorted(leaf_nodes, key=str) # Consistent order
-                    for i, leaf_node in enumerate(sorted_leaf_nodes):
-                        # Add a small random jitter to angles to prevent perfect overlaps for very large N
-                        jitter_amount = (2 * math.pi / max(1, num_leaves)) * 0.03 # Max 3% of angular separation
-                        jitter_angle = (random.random() - 0.5) * jitter_amount 
+
+                    # --- Multi-Ring Layout Logic ---
+                    # Determine number of rings based on number of leaves
+                    if num_leaves < 10:
+                        num_rings = 1
+                    elif num_leaves < 30:
+                        num_rings = 2
+                    elif num_leaves < 70:
+                        num_rings = 3
+                    elif num_leaves < 150:
+                        num_rings = 4
+                    else: # For very large graphs
+                        num_rings = 5 # Can go higher if needed
+                    
+                    # Distribute leaves among rings (simple distribution for now)
+                    nodes_per_ring = [0] * num_rings
+                    for i in range(num_leaves):
+                        nodes_per_ring[i % num_rings] += 1
+
+                    # Base radius for the innermost ring
+                    base_radius = 2.0 
+                    # Increment for each successive ring
+                    ring_spacing_factor = 1.0 # Controls how much larger each subsequent ring is
+
+                    current_leaf_index = 0
+                    for ring_idx in range(num_rings):
+                        leaves_in_this_ring = nodes_per_ring[ring_idx]
+                        if leaves_in_this_ring == 0:
+                            continue
+
+                        # Calculate radius for this ring
+                        # Scale radius based on ring index and number of leaves
+                        ring_radius = base_radius + (ring_idx * ring_spacing_factor) + (num_leaves**0.1) * 0.5 
                         
-                        angle = 2 * math.pi * i / max(1, num_leaves) + jitter_angle # Handle num_leaves=0 to prevent ZeroDivisionError
-                        x = radius * math.cos(angle)
-                        y = radius * math.sin(angle)
-                        pos[leaf_node] = (x, y)
+                        for i in range(leaves_in_this_ring):
+                            leaf_node = sorted_leaf_nodes[current_leaf_index]
+                            
+                            # Add a small random jitter to angles to prevent perfect overlaps
+                            jitter_amount = (2 * math.pi / max(1, leaves_in_this_ring)) * 0.02 # Max 2% of angular separation
+                            jitter_angle = (random.random() - 0.5) * jitter_amount 
+                            
+                            angle = 2 * math.pi * i / leaves_in_this_ring + jitter_angle
+                            x = ring_radius * math.cos(angle)
+                            y = ring_radius * math.sin(angle)
+                            pos[leaf_node] = (x, y)
+                            current_leaf_index += 1
+
                 elif G.order() > 50:
                     st.warning(f"Graph has {G.order()} nodes. Using circular layout for better spread.")
                     pos = nx.circular_layout(G)
@@ -465,13 +498,9 @@ if st.button("Draw Graph"):
 
             # Draw edge labels (if enabled)
             if edge_labels_enabled:
-                # You can customize these labels based on your graph's properties if needed
-                # For a general algebraic graph, edge labels might just be coordinates or simple identifiers
-                edge_labels = {edge: f"" for edge in G.edges()} # Example: (node1,node2)
-                # If you want to show actual node names:
                 edge_labels_display = {}
                 for u,v in G.edges():
-                    edge_labels_display[(u,v)] = f"{u}-{v}" 
+                    edge_labels_display[(u,v)] = f"{u}-{v}" # Example: shows "Node1-Node2" on the edge
 
                 nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels_display,
                                              font_size=edge_label_font_size,
@@ -498,10 +527,9 @@ if st.button("Draw Graph"):
                 range_x = max_x - min_x
                 range_y = max_y - min_y
                 
-                # A larger padding factor might be needed for very large node labels or many nodes
                 # Use a larger factor for star graphs
                 # Increased padding again for very large star graphs (like 100 nodes)
-                padding_factor = 0.25 if is_star_graph else 0.18 # More padding for star graphs
+                padding_factor = 0.28 if is_star_graph else 0.18 # Adjusted padding for multi-ring layout
                 dynamic_padding = max(range_x * padding_factor, range_y * padding_factor, 1.5) # Minimum 1.5 for very small graphs
                 
                 ax.set_xlim(min_x - dynamic_padding, max_x + dynamic_padding)
@@ -515,5 +543,4 @@ if st.button("Draw Graph"):
 # --- Footer ---
 st.markdown("---")
 st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
-
 
