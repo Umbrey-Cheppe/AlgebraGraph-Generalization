@@ -11,19 +11,19 @@ st.markdown("""
 Enter a symbolic expression to generate a graph.
 - `*` for **clique/complete subgraph** (e.g., `a*b` for edge, `1*2*3` for triangle on 1,2,3). Order doesn't matter (associative, commutative).
 - `+` for **graph union** (e.g., `(a*b)+(c*d)`). Follows absorption law `G_sup + G_sub = G_sup`.
-- **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)` or `1*(2+3+...+10)`). `Center` connects to individual nodes of leaves, and complex leaves (`D*E`) form their own cliques.
+- **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)` or `Center*(Leaf1+Leaf2+...+LeafN)`). `Center` connects to individual nodes of leaves, and complex leaves (`D*E`) form their own cliques.
 
 **Examples:**
 - `a*b*c` (triangle on a,b,c)
 - `(1*2)+(3*4)` (two separate edges)
 - `1*(2+3+4)` (star graph with 1 as center, leaves 2,3,4)
-- `A*(B+C+...+E)` (range-based star graph)
+- `A*(1+2+...+100)` (star graph with A as center, connects to 1, 2, ..., 100)
 - `(a*b*c) + (a*b)` (simplifies to `a*b*c` due to absorption)
 - `A*(B+C+D*E+F)` (A connects to B,C,D,E,F; also D connects to E)
-- `1*(1+2+...+10)` (Star graph. 1 is center, connects to 1-10. Self-loops are filtered.)
 """)
 
 # --- Input Field ---
+# Changed default example to use the preferred range notation
 expr = st.text_input("Graph Expression:", "A*(1+2+...+10)", help="Try different formats!")
 
 # --- Customization Options ---
@@ -168,53 +168,53 @@ def parse_leaf_list(tokens, current_index):
     all_individual_leaf_nodes = set()
     
     while current_index < len(tokens) and tokens[current_index] != ')':
-        # Prioritize range parsing
-        is_range_parsed = False
+        is_term_parsed = False # Flag to indicate if current term was handled
         
-        # Check for numeric range: N + ... + N
-        if (current_index + 4 < len(tokens) and 
-            re.match(r'^\d+$', tokens[current_index]) and
-            tokens[current_index + 1] == '+' and
-            tokens[current_index + 2] == '...' and
-            tokens[current_index + 3] == '+' and
-            re.match(r'^\d+$', tokens[current_index + 4])):
+        # --- Attempt to parse as a range first: N + ... + N or X_N + ... + X_N ---
+        # We need at least 5 tokens for this pattern: node, +, ..., +, node
+        if current_index + 4 < len(tokens) and \
+           tokens[current_index + 1] == '+' and \
+           tokens[current_index + 2] == '...' and \
+           tokens[current_index + 3] == '+':
             
-            start_num = int(tokens[current_index])
-            end_num = int(tokens[current_index + 4])
-            if start_num <= end_num:
-                for i in range(start_num, end_num + 1):
-                    all_individual_leaf_nodes.add(parse_nodes(str(i)))
-                current_index += 5 # Consume 5 tokens: N, +, ..., +, N
-                is_range_parsed = True
-            else:
-                st.warning(f"💡 Invalid numeric range: {tokens[current_index]}+...+{tokens[current_index+4]}. Start must be <= End.")
+            start_token = tokens[current_index]
+            end_token = tokens[current_index + 4]
 
-        # Check for alphanumeric range: X_N + ... + X_N
-        elif (current_index + 4 < len(tokens) and 
-              re.match(r'^([A-Za-z_]+)(\d+)$', tokens[current_index]) and
-              tokens[current_index + 1] == '+' and
-              tokens[current_index + 2] == '...' and
-              tokens[current_index + 3] == '+' and
-              re.match(r'^([A-Za-z_]+)(\d+)$', tokens[current_index + 4])):
-            
-            match_start = re.match(r'^([A-Za-z_]+)(\d+)$', tokens[current_index])
-            match_end = re.match(r'^([A-Za-z_]+)(\d+)$', tokens[current_index + 4])
-            
-            if match_start and match_end:
-                start_prefix = match_start.group(1)
-                start_num = int(match_start.group(2))
-                end_prefix = match_end.group(1)
-                end_num = int(match_end.group(2))
-                
-                if start_prefix == end_prefix and start_num <= end_num:
+            # Numeric range (e.g., 1+2+...+10)
+            if re.match(r'^\d+$', start_token) and re.match(r'^\d+$', end_token):
+                start_num = int(start_token)
+                end_num = int(end_token)
+                if start_num <= end_num:
                     for i in range(start_num, end_num + 1):
-                        all_individual_leaf_nodes.add(parse_nodes(f"{start_prefix}{i}"))
-                    current_index += 5 # Consume 5 tokens
-                    is_range_parsed = True
+                        all_individual_leaf_nodes.add(parse_nodes(str(i)))
+                    current_index += 5 # Consume: N, +, ..., +, N
+                    is_term_parsed = True
                 else:
-                    st.warning(f"💡 Invalid alphanumeric range: {tokens[current_index]}+...+{tokens[current_index+4]}. Prefixes must match and Start Num <= End Num.")
+                    st.warning(f"💡 Invalid numeric range: {start_token}+...+{end_token}. Start must be <= End.")
 
-        if not is_range_parsed: # Not a range, or range format unrecognized, parse as a regular leaf term
+            # Alphanumeric range (e.g., A_1+A_2+...+A_10)
+            elif re.match(r'^([A-Za-z_]+)(\d+)$', start_token) and \
+                 re.match(r'^([A-Za-z_]+)(\d+)$', end_token):
+                
+                match_start = re.match(r'^([A-Za-z_]+)(\d+)$', start_token)
+                match_end = re.match(r'^([A-Za-z_]+)(\d+)$', end_token)
+                
+                if match_start and match_end and match_start.group(1) == match_end.group(1):
+                    start_prefix = match_start.group(1)
+                    start_num = int(match_start.group(2))
+                    end_num = int(match_end.group(2))
+                    
+                    if start_num <= end_num:
+                        for i in range(start_num, end_num + 1):
+                            all_individual_leaf_nodes.add(parse_nodes(f"{start_prefix}{i}"))
+                        current_index += 5 # Consume: X_N, +, ..., +, X_N
+                        is_term_parsed = True
+                    else:
+                        st.warning(f"💡 Invalid alphanumeric range: {start_token}+...+{end_token}. Start Num <= End Num.")
+                else:
+                    st.warning(f"💡 Mismatched prefixes or invalid format for alphanumeric range: {start_token}+...+{end_token}. ")
+
+        if not is_term_parsed: # If it's not a range, parse as a single leaf term (could be a node or complex expression)
             start_of_leaf_term_index = current_index
             temp_paren_level = 0
             end_of_current_leaf_term_index = current_index
@@ -228,7 +228,7 @@ def parse_leaf_list(tokens, current_index):
                 
                 # Break if we hit a '+' outside of any sub-parentheses, or the closing ')'
                 if (token == '+' and temp_paren_level == 0) or \
-                   (token == ')' and temp_paren_level == -1): # Changed to -1 to catch closing paren of the list
+                   (token == ')' and temp_paren_level == -1): # paren_level -1 means we just closed the main leaf list paren
                     break
                 
                 end_of_current_leaf_term_index += 1
@@ -236,7 +236,6 @@ def parse_leaf_list(tokens, current_index):
             leaf_term_tokens = tokens[start_of_leaf_term_index:end_of_current_leaf_term_index]
             
             if not leaf_term_tokens:
-                # This can happen if there's an extra '+' or empty term like A*(B++C)
                 raise ValueError(f"Empty leaf term encountered in star graph list at index {current_index}.")
                 
             sub_expr_string = "".join(leaf_term_tokens).strip()
@@ -260,7 +259,7 @@ def parse_leaf_list(tokens, current_index):
                 
             current_index = end_of_current_leaf_term_index
 
-        # After processing a leaf (either range or complex term), check for '+' separator
+        # After processing any type of leaf term (range or single term), check for '+' separator
         if current_index < len(tokens) and tokens[current_index] == '+':
             current_index += 1 # Consume the '+' separator for the next leaf term
             
@@ -350,4 +349,3 @@ if st.button("Draw Graph"):
 # --- Footer ---
 st.markdown("---")
 st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
-
