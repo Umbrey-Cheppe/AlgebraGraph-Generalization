@@ -189,8 +189,9 @@ def parse_factor(tokens, index):
     
     if current_token == '(':
         index += 1 # Consume '('
-        # Try to parse the content of the parentheses as a full expression (sum or clique)
-        edges, index, nodes = parse_expression(tokens, index) # This handles (1+2+...+5)
+        # Crucially, here we recurse to parse_expression to handle the '+'
+        # and '...' syntax within the parentheses for standalone unions.
+        edges, index, nodes = parse_expression(tokens, index)
         if index < len(tokens) and tokens[index] == ')':
             index += 1 # Consume ')'
             return edges, index, nodes
@@ -350,7 +351,14 @@ if st.button("Draw Graph"):
     edges_to_draw, all_nodes_in_expr = parse_and_simplify_graph_expression(expr)
     
     if not edges_to_draw and not all_nodes_in_expr:
-        st.error("❌ Failed to parse expression or no nodes/edges generated. Check expression and hints provided above.")
+        # If no edges, but there are nodes (e.g., (1+2+3)), display them as isolated nodes
+        if all_nodes_in_expr:
+            st.info("The expression resulted in isolated nodes (no edges). Displaying them.")
+            G = nx.Graph()
+            G.add_nodes_from(list(all_nodes_in_expr))
+        else:
+            st.error("❌ Failed to parse expression or no nodes/edges generated. Check expression and hints provided above.")
+            st.stop() # Stop execution if no graph to draw
     else:
         # --- Filter out self-loops (u, u) ---
         final_edges_for_nx = []
@@ -363,205 +371,204 @@ if st.button("Draw Graph"):
         G.add_nodes_from(list(all_nodes_in_expr))
         G.add_edges_from(final_edges_for_nx)
         
-        # --- Visualization ---
-        if not G.nodes(): 
-            st.info("The expression resulted in no visible graph (possibly empty or only filtered self-loops).")
-            st.warning("Consider an expression that creates distinct connections, like `1*(2+3)` or `a*b`.")
-        else:
-            # --- Star Graph Detection (for custom layout) ---
-            is_star_graph = False
-            center_node = None
-            if G.order() > 1: # G.order() is number of nodes
-                degrees = dict(G.degree())
-                # A node is a center of a star graph if its degree is N-1 (connected to all other N-1 nodes)
-                potential_centers = [node for node, degree in degrees.items() if degree == G.order() - 1]
-                
-                if len(potential_centers) == 1:
-                    center_node = potential_centers[0]
-                    # Verify all other nodes are leaves (degree 1)
-                    all_others_are_leaves = True
-                    for node, degree in degrees.items():
-                        if node != center_node and degree != 1:
-                            all_others_are_leaves = False
-                            break
-                    if all_others_are_leaves:
-                        is_star_graph = True
+    # --- Proceed with Visualization if G is not empty ---
+    if not G.nodes(): 
+        st.info("The expression resulted in no visible graph (possibly empty or only filtered self-loops).")
+        st.warning("Consider an expression that creates distinct connections, like `1*(2+3)` or `a*b`.")
+    else:
+        # --- Star Graph Detection (for custom layout) ---
+        is_star_graph = False
+        center_node = None
+        if G.order() > 1: # G.order() is number of nodes
+            degrees = dict(G.degree())
+            # A node is a center of a star graph if its degree is N-1 (connected to all other N-1 nodes)
+            potential_centers = [node for node, degree in degrees.items() if degree == G.order() - 1]
             
-            pos = {} # Initialize position dictionary
+            if len(potential_centers) == 1:
+                center_node = potential_centers[0]
+                # Verify all other nodes are leaves (degree 1)
+                all_others_are_leaves = True
+                for node, degree in degrees.items():
+                    if node != center_node and degree != 1:
+                        all_others_are_leaves = False
+                        break
+                if all_others_are_leaves:
+                    is_star_graph = True
+        
+        pos = {} # Initialize position dictionary
 
-            # Determine layout based on user selection or auto mode
-            if layout_type == "Auto (Spring/Star/Circular)":
-                if is_star_graph:
-                    st.info("Detected star graph. Using custom radial multi-ring layout for clear center display.")
-                    pos[center_node] = (0, 0) # Center node at origin
-                    leaf_nodes = [node for node in G.nodes() if node != center_node]
-                    num_leaves = len(leaf_nodes)
-                    sorted_leaf_nodes = sorted(leaf_nodes, key=str) # Consistent order
+        # Determine layout based on user selection or auto mode
+        if layout_type == "Auto (Spring/Star/Circular)":
+            if is_star_graph:
+                st.info("Detected star graph. Using custom radial multi-ring layout for clear center display.")
+                pos[center_node] = (0, 0) # Center node at origin
+                leaf_nodes = [node for node in G.nodes() if node != center_node]
+                num_leaves = len(leaf_nodes)
+                sorted_leaf_nodes = sorted(leaf_nodes, key=str) # Consistent order
 
-                    # --- Multi-Ring Layout Logic ---
-                    # Determine number of rings based on number of leaves
-                    if num_leaves < 10:
-                        num_rings = 1
-                    elif num_leaves < 30:
-                        num_rings = 2
-                    elif num_leaves < 70:
-                        num_rings = 3
-                    elif num_leaves < 150:
-                        num_rings = 4
-                    else: # For very large graphs
-                        num_rings = 5 # Can go higher if needed
+                # --- Multi-Ring Layout Logic ---
+                # Determine number of rings based on number of leaves
+                if num_leaves < 10:
+                    num_rings = 1
+                elif num_leaves < 30:
+                    num_rings = 2
+                elif num_leaves < 70:
+                    num_rings = 3
+                elif num_leaves < 150:
+                    num_rings = 4
+                else: # For very large graphs
+                    num_rings = 5 # Can go higher if needed
+                
+                # Distribute leaves among rings (simple distribution for now)
+                # This ensures leaves are roughly evenly distributed across rings
+                nodes_per_ring_list = [0] * num_rings
+                for i in range(num_leaves):
+                    nodes_per_ring_list[i % num_rings] += 1
+
+                base_radius = 2.0 
+                ring_spacing_factor = 1.2 # Controls how much larger each subsequent ring is
+
+                current_leaf_index = 0
+                for ring_idx in range(num_rings):
+                    leaves_in_this_ring = nodes_per_ring_list[ring_idx]
+                    if leaves_in_this_ring == 0:
+                        continue
+
+                    # Calculate radius for this ring
+                    # Scale radius based on ring index and total number of leaves
+                    # The (num_leaves**0.1) * 0.5 provides a slight global scaling based on total leaves
+                    ring_radius = base_radius + (ring_idx * ring_spacing_factor) + (num_leaves**0.1) * 0.5 
                     
-                    # Distribute leaves among rings (simple distribution for now)
-                    # This ensures leaves are roughly evenly distributed across rings
-                    nodes_per_ring_list = [0] * num_rings
-                    for i in range(num_leaves):
-                        nodes_per_ring_list[i % num_rings] += 1
-
-                    base_radius = 2.0 
-                    ring_spacing_factor = 1.2 # Controls how much larger each subsequent ring is
-
-                    current_leaf_index = 0
-                    for ring_idx in range(num_rings):
-                        leaves_in_this_ring = nodes_per_ring_list[ring_idx]
-                        if leaves_in_this_ring == 0:
-                            continue
-
-                        # Calculate radius for this ring
-                        # Scale radius based on ring index and total number of leaves
-                        # The (num_leaves**0.1) * 0.5 provides a slight global scaling based on total leaves
-                        ring_radius = base_radius + (ring_idx * ring_spacing_factor) + (num_leaves**0.1) * 0.5 
+                    for i in range(leaves_in_this_ring):
+                        leaf_node = sorted_leaf_nodes[current_leaf_index]
                         
-                        for i in range(leaves_in_this_ring):
-                            leaf_node = sorted_leaf_nodes[current_leaf_index]
-                            
-                            # Add a small random jitter to angles to prevent perfect overlaps
-                            jitter_amount = (2 * math.pi / max(1, leaves_in_this_ring)) * 0.02 # Max 2% of angular separation
-                            jitter_angle = (random.random() - 0.5) * jitter_amount 
-                            
-                            angle = 2 * math.pi * i / leaves_in_this_ring + jitter_angle
-                            x = ring_radius * math.cos(angle)
-                            y = ring_radius * math.sin(angle)
-                            pos[leaf_node] = (x, y)
-                            current_leaf_index += 1
+                        # Add a small random jitter to angles to prevent perfect overlaps
+                        jitter_amount = (2 * math.pi / max(1, leaves_in_this_ring)) * 0.02 # Max 2% of angular separation
+                        jitter_angle = (random.random() - 0.5) * jitter_amount 
+                        
+                        angle = 2 * math.pi * i / leaves_in_this_ring + jitter_angle
+                        x = ring_radius * math.cos(angle)
+                        y = ring_radius * math.sin(angle)
+                        pos[leaf_node] = (x, y)
+                        current_leaf_index += 1
 
-                elif G.order() > 50:
-                    st.warning(f"Graph has {G.order()} nodes. Using circular layout for better spread.")
-                    pos = nx.circular_layout(G)
-                    # Apply a small angular offset to nodes to try and reduce edge overlap for circular layout
-                    if pos:
-                        angle_offset = random.uniform(0, 2 * math.pi / len(G.nodes())) # A random offset based on node density
-                        for node in G.nodes():
-                            x, y = pos[node]
-                            current_angle = math.atan2(y, x)
-                            new_angle = current_angle + angle_offset
-                            radius = math.sqrt(x**2 + y**2)
-                            pos[node] = (radius * math.cos(new_angle), radius * math.sin(new_angle))
-
-                else:
-                    pos = nx.spring_layout(G, seed=42) # Use a fixed seed for reproducibility
-            elif layout_type == "Spring":
-                pos = nx.spring_layout(G, seed=42)
-            elif layout_type == "Circular":
+            elif G.order() > 50:
+                st.warning(f"Graph has {G.order()} nodes. Using circular layout for better spread.")
                 pos = nx.circular_layout(G)
-                # Apply a small angular offset to nodes to try and reduce edge overlap
-                if pos:
-                    angle_offset = random.uniform(0, 2 * math.pi / len(G.nodes()))
+                # Apply a small angular offset to nodes to try and reduce edge overlap for circular layout
+                if pos and len(G.nodes()) > 1:
+                    angle_offset = random.uniform(0, 2 * math.pi / len(G.nodes())) # A random offset based on node density
                     for node in G.nodes():
                         x, y = pos[node]
                         current_angle = math.atan2(y, x)
                         new_angle = current_angle + angle_offset
                         radius = math.sqrt(x**2 + y**2)
                         pos[node] = (radius * math.cos(new_angle), radius * math.sin(new_angle))
-            elif layout_type == "Kamada-Kawai":
-                pos = nx.kamada_kawai_layout(G)
-            elif layout_type == "Spectral":
-                pos = nx.spectral_layout(G)
-            elif layout_type == "Shell":
-                pos = nx.shell_layout(G)
+
+            else:
+                pos = nx.spring_layout(G, seed=42) # Use a fixed seed for reproducibility
+        elif layout_type == "Spring":
+            pos = nx.spring_layout(G, seed=42)
+        elif layout_type == "Circular":
+            pos = nx.circular_layout(G)
+            # Apply a small angular offset to nodes to try and reduce edge overlap
+            if pos and len(G.nodes()) > 1:
+                angle_offset = random.uniform(0, 2 * math.pi / len(G.nodes()))
+                for node in G.nodes():
+                    x, y = pos[node]
+                    current_angle = math.atan2(y, x)
+                    new_angle = current_angle + angle_offset
+                    radius = math.sqrt(x**2 + y**2)
+                    pos[node] = (radius * math.cos(new_angle), radius * math.sin(new_angle))
+        elif layout_type == "Kamada-Kawai":
+            pos = nx.kamada_kawai_layout(G)
+        elif layout_type == "Spectral":
+            pos = nx.spectral_layout(G)
+        elif layout_type == "Shell":
+            pos = nx.shell_layout(G)
 
 
-            # --- Plotting ---
-            st.subheader("2D Graph View (Matplotlib)")
-            fig, ax = plt.subplots(figsize=(10, 8)) 
-            fig.patch.set_facecolor(plot_bgcolor) # Set figure background
-            ax.set_facecolor(plot_bgcolor) # Set axes background
+        # --- Plotting ---
+        st.subheader("2D Graph View (Matplotlib)")
+        fig, ax = plt.subplots(figsize=(10, 8)) 
+        fig.patch.set_facecolor(plot_bgcolor) # Set figure background
+        ax.set_facecolor(plot_bgcolor) # Set axes background
 
-            # Draw nodes
-            nx.draw_networkx_nodes(G, pos,
-                                   node_color=node_color,
-                                   edgecolors=node_border_color,
-                                   linewidths=node_border_width,
-                                   node_shape=node_shape,
-                                   node_size=node_size,
-                                   ax=ax)
+        # Draw nodes
+        nx.draw_networkx_nodes(G, pos,
+                               node_color=node_color,
+                               edgecolors=node_border_color,
+                               linewidths=node_border_width,
+                               node_shape=node_shape,
+                               node_size=node_size,
+                               ax=ax)
+        
+        # Draw edges
+        nx.draw_networkx_edges(G, pos,
+                               edge_color=edge_color,
+                               width=edge_width,
+                               style=edge_style,
+                               ax=ax)
+        
+        # Draw node labels
+        node_labels = {node: str(node) for node in G.nodes()}
+        texts = nx.draw_networkx_labels(G, pos, labels=node_labels,
+                                        font_size=font_size,
+                                        font_color=font_color,
+                                        font_weight="bold",
+                                        font_family=font_family, # Apply global font family
+                                        ax=ax)
+        
+        # Add node label background if enabled
+        if label_bgcolor_enabled:
+            for _, text_obj in texts.items():
+                text_obj.set_bbox(dict(facecolor=label_bgcolor, edgecolor='none', boxstyle='round,pad=0.2'))
+
+        # Draw edge labels (if enabled)
+        if edge_labels_enabled:
+            edge_labels_display = {}
+            for u,v in G.edges():
+                edge_labels_display[(u,v)] = f"{u}-{v}" # Example: shows "Node1-Node2" on the edge
+
+            nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels_display,
+                                         font_size=edge_label_font_size,
+                                         font_color=edge_label_color,
+                                         font_family=font_family, # Apply global font family
+                                         ax=ax)
+
+
+        ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color, fontfamily=font_family)
+        
+        # --- Adjust plot limits to ensure center is indeed centered and all nodes fit ---
+        # Calculate min/max x and y coordinates from node positions
+        if pos: # Ensure pos is not empty
+            all_x = [p[0] for p in pos.values()]
+            all_y = [p[1] for p in pos.values()]
+
+            min_x = min(all_x)
+            max_x = max(all_x)
+            min_y = min(all_y)
+            max_y = max(all_y)
             
-            # Draw edges
-            nx.draw_networkx_edges(G, pos,
-                                   edge_color=edge_color,
-                                   width=edge_width,
-                                   style=edge_style,
-                                   ax=ax)
+            # Determine a dynamic padding based on the graph's extent
+            # Ensure minimum padding to avoid labels being cut off for small graphs
+            range_x = max_x - min_x
+            range_y = max_y - min_y
             
-            # Draw node labels
-            node_labels = {node: str(node) for node in G.nodes()}
-            texts = nx.draw_networkx_labels(G, pos, labels=node_labels,
-                                            font_size=font_size,
-                                            font_color=font_color,
-                                            font_weight="bold",
-                                            font_family=font_family, # Apply global font family
-                                            ax=ax)
+            # Use a larger factor for star graphs
+            # Increased padding again for very large star graphs (like 100 nodes)
+            padding_factor = 0.28 if is_star_graph else 0.18 # Adjusted padding for multi-ring layout
+            dynamic_padding = max(range_x * padding_factor, range_y * padding_factor, 1.5) # Minimum 1.5 for very small graphs
             
-            # Add node label background if enabled
-            if label_bgcolor_enabled:
-                for _, text_obj in texts.items():
-                    text_obj.set_bbox(dict(facecolor=label_bgcolor, edgecolor='none', boxstyle='round,pad=0.2'))
-
-            # Draw edge labels (if enabled)
-            if edge_labels_enabled:
-                edge_labels_display = {}
-                for u,v in G.edges():
-                    edge_labels_display[(u,v)] = f"{u}-{v}" # Example: shows "Node1-Node2" on the edge
-
-                nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels_display,
-                                             font_size=edge_label_font_size,
-                                             font_color=edge_label_color,
-                                             font_family=font_family, # Apply global font family
-                                             ax=ax)
-
-
-            ax.set_title(f"Graph for: `{expr}` (Self-loops filtered, terms absorbed)", size=font_size + 4, color=font_color, fontfamily=font_family)
-            
-            # --- Adjust plot limits to ensure center is indeed centered and all nodes fit ---
-            # Calculate min/max x and y coordinates from node positions
-            if pos: # Ensure pos is not empty
-                all_x = [p[0] for p in pos.values()]
-                all_y = [p[1] for p in pos.values()]
-
-                min_x = min(all_x)
-                max_x = max(all_x)
-                min_y = min(all_y)
-                max_y = max(all_y)
-                
-                # Determine a dynamic padding based on the graph's extent
-                # Ensure minimum padding to avoid labels being cut off for small graphs
-                range_x = max_x - min_x
-                range_y = max_y - min_y
-                
-                # Use a larger factor for star graphs
-                # Increased padding again for very large star graphs (like 100 nodes)
-                padding_factor = 0.28 if is_star_graph else 0.18 # Adjusted padding for multi-ring layout
-                dynamic_padding = max(range_x * padding_factor, range_y * padding_factor, 1.5) # Minimum 1.5 for very small graphs
-                
-                ax.set_xlim(min_x - dynamic_padding, max_x + dynamic_padding)
-                ax.set_ylim(min_y - dynamic_padding, max_y + dynamic_padding)
-                ax.set_aspect('equal', adjustable='box') # Maintain aspect ratio
-            
-            plt.grid(False) # Turn off grid lines
-            plt.axis('off') # Turn off axes
-            st.pyplot(fig)
+            ax.set_xlim(min_x - dynamic_padding, max_x + dynamic_padding)
+            ax.set_ylim(min_y - dynamic_padding, max_y + dynamic_padding)
+            ax.set_aspect('equal', adjustable='box') # Maintain aspect ratio
+        
+        plt.grid(False) # Turn off grid lines
+        plt.axis('off') # Turn off axes
+        st.pyplot(fig)
 
 # --- Footer ---
 st.markdown("---")
 st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
-
 
