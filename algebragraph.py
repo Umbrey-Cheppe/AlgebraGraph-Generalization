@@ -26,6 +26,7 @@ Enter a symbolic expression to generate a graph.
 - `A*(1+2+...+100)` (star graph with A as center, connects to 1, 2, ..., 100)
 - `(a*b*c) + (a*b)` (simplifies to `a*b*c` due to absorption)
 - `A*(B+C+D*E+F)` (A connects to B,C,D,E,F; also D connects to E)
+- `(1+2+...+5)` (a set of isolated nodes 1,2,3,4,5)
 """)
 
 # --- Input Field ---
@@ -44,8 +45,7 @@ layout_type = st.sidebar.selectbox(
 # Node Customization
 st.sidebar.subheader("Nodes")
 node_color = st.sidebar.color_picker("Node Color", "#ADD8E6")
-# Default node size changed to 1000 for a more "normal" appearance
-node_size = st.sidebar.slider("Node Size", 100, 5000, 1000) 
+node_size = st.sidebar.slider("Node Size", 100, 5000, 1000) # Default node size changed to 1000
 node_shape = st.sidebar.selectbox("Node Shape", ["o", "s", "D", "^", "v", "h"], format_func=lambda x: {"o":"Circle", "s":"Square", "D":"Diamond", "^":"Triangle Up", "v":"Triangle Down", "h":"Hexagon"}[x], help="Matplotlib marker style.")
 node_border_color = st.sidebar.color_picker("Node Border Color", "#000000")
 node_border_width = st.sidebar.slider("Node Border Width", 0.0, 5.0, 1.0)
@@ -184,12 +184,13 @@ def parse_sum_term(tokens, index):
     return edges_from_factor1, index, nodes_in_factor1
 
 def parse_factor(tokens, index):
-    """Parses a primary factor: a node, a parenthesized expression."""
+    """Parses a primary factor: a node, or a parenthesized expression."""
     current_token = tokens[index]
     
     if current_token == '(':
         index += 1 # Consume '('
-        edges, index, nodes = parse_expression(tokens, index)
+        # Try to parse the content of the parentheses as a full expression (sum or clique)
+        edges, index, nodes = parse_expression(tokens, index) # This handles (1+2+...+5)
         if index < len(tokens) and tokens[index] == ')':
             index += 1 # Consume ')'
             return edges, index, nodes
@@ -411,23 +412,23 @@ if st.button("Draw Graph"):
                         num_rings = 5 # Can go higher if needed
                     
                     # Distribute leaves among rings (simple distribution for now)
-                    nodes_per_ring = [0] * num_rings
+                    # This ensures leaves are roughly evenly distributed across rings
+                    nodes_per_ring_list = [0] * num_rings
                     for i in range(num_leaves):
-                        nodes_per_ring[i % num_rings] += 1
+                        nodes_per_ring_list[i % num_rings] += 1
 
-                    # Base radius for the innermost ring
                     base_radius = 2.0 
-                    # Increment for each successive ring
-                    ring_spacing_factor = 1.0 # Controls how much larger each subsequent ring is
+                    ring_spacing_factor = 1.2 # Controls how much larger each subsequent ring is
 
                     current_leaf_index = 0
                     for ring_idx in range(num_rings):
-                        leaves_in_this_ring = nodes_per_ring[ring_idx]
+                        leaves_in_this_ring = nodes_per_ring_list[ring_idx]
                         if leaves_in_this_ring == 0:
                             continue
 
                         # Calculate radius for this ring
-                        # Scale radius based on ring index and number of leaves
+                        # Scale radius based on ring index and total number of leaves
+                        # The (num_leaves**0.1) * 0.5 provides a slight global scaling based on total leaves
                         ring_radius = base_radius + (ring_idx * ring_spacing_factor) + (num_leaves**0.1) * 0.5 
                         
                         for i in range(leaves_in_this_ring):
@@ -446,12 +447,31 @@ if st.button("Draw Graph"):
                 elif G.order() > 50:
                     st.warning(f"Graph has {G.order()} nodes. Using circular layout for better spread.")
                     pos = nx.circular_layout(G)
+                    # Apply a small angular offset to nodes to try and reduce edge overlap for circular layout
+                    if pos:
+                        angle_offset = random.uniform(0, 2 * math.pi / len(G.nodes())) # A random offset based on node density
+                        for node in G.nodes():
+                            x, y = pos[node]
+                            current_angle = math.atan2(y, x)
+                            new_angle = current_angle + angle_offset
+                            radius = math.sqrt(x**2 + y**2)
+                            pos[node] = (radius * math.cos(new_angle), radius * math.sin(new_angle))
+
                 else:
                     pos = nx.spring_layout(G, seed=42) # Use a fixed seed for reproducibility
             elif layout_type == "Spring":
                 pos = nx.spring_layout(G, seed=42)
             elif layout_type == "Circular":
                 pos = nx.circular_layout(G)
+                # Apply a small angular offset to nodes to try and reduce edge overlap
+                if pos:
+                    angle_offset = random.uniform(0, 2 * math.pi / len(G.nodes()))
+                    for node in G.nodes():
+                        x, y = pos[node]
+                        current_angle = math.atan2(y, x)
+                        new_angle = current_angle + angle_offset
+                        radius = math.sqrt(x**2 + y**2)
+                        pos[node] = (radius * math.cos(new_angle), radius * math.sin(new_angle))
             elif layout_type == "Kamada-Kawai":
                 pos = nx.kamada_kawai_layout(G)
             elif layout_type == "Spectral":
@@ -543,4 +563,5 @@ if st.button("Draw Graph"):
 # --- Footer ---
 st.markdown("---")
 st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
+
 
