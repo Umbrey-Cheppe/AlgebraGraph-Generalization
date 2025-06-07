@@ -16,7 +16,7 @@ Enter a symbolic expression to generate a graph.
 - **Star Graph** syntax (e.g., `Center*(Leaf1+Leaf2)` or `Center*(Leaf1+Leaf2+...+LeafN)`).
   - `Center` connects to individual nodes of leaves.
   - Complex leaves (`D*E`) form their own cliques.
-  - **Important for Ranges:** For numerical ranges, use `Start + ... + End` (e.g., `A*(1+2+...+100)`). The `+` signs around `...` are necessary for correct parsing.
+  - **Important for Ranges:** For numerical ranges, **you MUST use `Start + ... + End`** (e.g., `A*(1+2+...+100)`). The `+` signs around `...` are **CRUCIAL** for correct parsing. `A*(1...100)` is **NOT** a valid syntax and will cause an error.
   - **Important for Ranges:** For alphanumeric ranges, use `Prefix_StartNum + ... + Prefix_EndNum` (e.g., `X_1+X_2+...+X_10`).
 
 **Examples:**
@@ -56,20 +56,20 @@ edge_color = st.sidebar.color_picker("Edge Color", "#808080")
 edge_width = st.sidebar.slider("Edge Width", 0.5, 5.0, 1.0)
 edge_style = st.sidebar.selectbox("Edge Style", ["solid", "dashed", "dotted"], help="Matplotlib linestyle.")
 
-# New: Edge Labels (Experimental for undirected, more typical for directed)
+# Edge Labels
 edge_labels_enabled = st.sidebar.checkbox("Show Edge Labels (Experimental)", False)
 edge_label_color = st.sidebar.color_picker("Edge Label Color", "#555555", disabled=not edge_labels_enabled)
 edge_label_font_size = st.sidebar.slider("Edge Label Font Size", 6, 18, 9, disabled=not edge_labels_enabled)
 
 
-# Label Customization
+# Label Customization (for nodes)
 st.sidebar.subheader("Node Labels")
 font_color = st.sidebar.color_picker("Label Color", "#333333")
 font_size = st.sidebar.slider("Font Size", 8, 24, 12)
 label_bgcolor_enabled = st.sidebar.checkbox("Label Background", False)
 label_bgcolor = st.sidebar.color_picker("Label Background Color", "#FFFFFF", disabled=not label_bgcolor_enabled)
 
-# New: Global Font Family
+# Global Font Family
 font_family = st.sidebar.selectbox("Font Family", ["sans-serif", "serif", "monospace", "fantasy", "cursive"], help="Global font for all labels.")
 
 
@@ -159,7 +159,7 @@ def parse_sum_term(tokens, index):
             if index < len(tokens) and tokens[index] == ')':
                 index += 1
             else:
-                raise ValueError("Expected ')' after star graph leaves. For ranges, use `Start+... +End`.")
+                raise ValueError("Expected ')' after star graph leaves. For ranges, use `Start+... +End` (e.g., `A*(1+2+...+100)`).")
             
         else: # Standard multiplication (clique formation)
             # Collect all nodes connected by '*'
@@ -199,7 +199,7 @@ def parse_factor(tokens, index):
         index += 1
         return set(), index, {node} # A single node forms no edges on its own
     else:
-        raise ValueError(f"Unexpected token: {current_token} at index {index}. Expected node or '('. For ranges, use `Start+... +End`.")
+        raise ValueError(f"Unexpected token: `{current_token}` at index {index}. Expected node or '('. For ranges, use `Start+... +End`.")
 
 def parse_leaf_list(tokens, current_index):
     """
@@ -233,7 +233,7 @@ def parse_leaf_list(tokens, current_index):
                     current_index += 5 # Consume: N, +, ..., +, N
                     is_term_parsed = True
                 else:
-                    st.warning(f"💡 Invalid numeric range: {start_token}+...+{end_token}. Start must be <= End. Check syntax.")
+                    st.warning(f"💡 Invalid numeric range: `{start_token}+...+{end_token}`. Start must be <= End. Check syntax: `Start+... +End`.")
 
             # Alphanumeric range (e.g., A_1+A_2+...+A_10)
             elif re.match(r'^([A-Za-z_]+)(\d+)$', start_token) and \
@@ -253,9 +253,9 @@ def parse_leaf_list(tokens, current_index):
                         current_index += 5 # Consume: X_N, +, ..., +, X_N
                         is_term_parsed = True
                     else:
-                        st.warning(f"💡 Invalid alphanumeric range: {start_token}+...+{end_token}. Start Num <= End Num. Check syntax.")
+                        st.warning(f"💡 Invalid alphanumeric range: `{start_token}+...+{end_token}`. Start Num <= End Num. Check syntax: `Prefix_StartNum+... +Prefix_EndNum`.")
                 else:
-                    st.warning(f"💡 Mismatched prefixes or invalid format for alphanumeric range: {start_token}+...+{end_token}. Check syntax.")
+                    st.warning(f"💡 Mismatched prefixes or invalid format for alphanumeric range: `{start_token}+...+{end_token}`. Check syntax.")
 
         if not is_term_parsed: # If it's not a range, parse as a single leaf term (could be a node or complex expression)
             start_of_leaf_term_index = current_index
@@ -296,9 +296,10 @@ def parse_leaf_list(tokens, current_index):
                 all_leaves_edges.update(sub_expr_edges)
                 all_individual_leaf_nodes.update(sub_expr_nodes)
             except ValueError as e:
-                raise ValueError(f"Failed to parse leaf term `{sub_expr_string}`: {e}")
+                # Add more context to the error for better debugging of leaf terms
+                raise ValueError(f"Failed to parse leaf term `{sub_expr_string}` within star graph. Ensure valid syntax: {e}")
             except Exception as e:
-                raise ValueError(f"An unexpected error occurred parsing leaf term `{sub_expr_string}`: {e}")
+                raise ValueError(f"An unexpected error occurred parsing leaf term `{sub_expr_string}` within star graph: {e}")
                 
             current_index = end_of_current_leaf_term_index
 
@@ -326,7 +327,10 @@ def parse_and_simplify_graph_expression(expr):
         raw_edges, final_index, all_nodes_in_expr = parse_expression(tokens, 0)
         
         if final_index != len(tokens):
-            st.error(f"⚠️ Unparsed tokens remaining after expression: `{''.join(tokens[final_index:])}`. Check your expression syntax. Hint: For ranges, use `Start+... +End` (e.g., `A*(1+2+...+100)`).")
+            # Improved error message for unparsed tokens
+            remaining_tokens_str = ''.join(tokens[final_index:])
+            first_unparsed_token = tokens[final_index] if final_index < len(tokens) else "end of expression"
+            st.error(f"⚠️ Unparsed tokens remaining after expression: `{remaining_tokens_str}` starting at `{first_unparsed_token}`. Check your expression syntax. Hint: For numerical ranges, use `Start+... +End` (e.g., `A*(1+2+...+100)`). The `...` must be surrounded by `+` signs.")
             return set(), set()
             
         return raw_edges, all_nodes_in_expr
@@ -344,7 +348,7 @@ if st.button("Draw Graph"):
     edges_to_draw, all_nodes_in_expr = parse_and_simplify_graph_expression(expr)
     
     if not edges_to_draw and not all_nodes_in_expr:
-        st.error("❌ Failed to parse expression or no nodes/edges generated. Check expression and hints.")
+        st.error("❌ Failed to parse expression or no nodes/edges generated. Check expression and hints provided above.")
     else:
         # --- Filter out self-loops (u, u) ---
         final_edges_for_nx = []
@@ -367,10 +371,12 @@ if st.button("Draw Graph"):
             center_node = None
             if G.order() > 1:
                 degrees = dict(G.degree())
+                # A node is a center of a star graph if its degree is N-1 (connected to all other N-1 nodes)
                 potential_centers = [node for node, degree in degrees.items() if degree == G.order() - 1]
                 
                 if len(potential_centers) == 1:
                     center_node = potential_centers[0]
+                    # Verify all other nodes are leaves (degree 1)
                     all_others_are_leaves = True
                     for node, degree in degrees.items():
                         if node != center_node and degree != 1:
@@ -385,28 +391,27 @@ if st.button("Draw Graph"):
             if layout_type == "Auto (Spring/Star/Circular)":
                 if is_star_graph:
                     st.info("Detected star graph. Using custom radial layout for clear center display.")
-                    pos[center_node] = (0, 0)
+                    pos[center_node] = (0, 0) # Center node at origin
                     leaf_nodes = [node for node in G.nodes() if node != center_node]
                     num_leaves = len(leaf_nodes)
                     
-                    # More robust radius calculation for 2D:
-                    # Adjusted the base radius and scale factor to give more room for larger star graphs
-                    # The `0.45` exponent gives a good balance.
-                    radius = 3.5 + (num_leaves**0.45) * 0.6 
+                    # Refined radius calculation for 2D star graphs
+                    # Adjusted scaling to account for the larger number of nodes like 100
+                    # The base `4.0` gives more room, and `0.5` exponent provides aggressive scaling.
+                    radius = 4.0 + (num_leaves**0.5) * 0.7 # Further adjusted: higher base, higher exponent for better spread
                     
                     sorted_leaf_nodes = sorted(leaf_nodes, key=str) # Consistent order
                     for i, leaf_node in enumerate(sorted_leaf_nodes):
                         # Add a small random jitter to angles to prevent perfect overlaps for very large N
-                        # The jitter is now a fraction of the angular separation (e.g., 5%)
-                        jitter_amount = (2 * math.pi / max(1, num_leaves)) * 0.05 # Max 5% of angular separation, handle num_leaves=0
+                        jitter_amount = (2 * math.pi / max(1, num_leaves)) * 0.03 # Max 3% of angular separation
                         jitter_angle = (random.random() - 0.5) * jitter_amount 
                         
-                        angle = 2 * math.pi * i / max(1, num_leaves) + jitter_angle # Handle num_leaves=0
+                        angle = 2 * math.pi * i / max(1, num_leaves) + jitter_angle # Handle num_leaves=0 to prevent ZeroDivisionError
                         x = radius * math.cos(angle)
                         y = radius * math.sin(angle)
                         pos[leaf_node] = (x, y)
                 elif G.order() > 50:
-                    st.warning(f"Graph has {G.order()} nodes. Visualization might be slow or crowded. Using circular layout for better spread.")
+                    st.warning(f"Graph has {G.order()} nodes. Using circular layout for better spread.")
                     pos = nx.circular_layout(G)
                 else:
                     pos = nx.spring_layout(G, seed=42) # Use a fixed seed for reproducibility
@@ -428,6 +433,7 @@ if st.button("Draw Graph"):
             fig.patch.set_facecolor(plot_bgcolor) # Set figure background
             ax.set_facecolor(plot_bgcolor) # Set axes background
 
+            # Draw nodes
             nx.draw_networkx_nodes(G, pos,
                                    node_color=node_color,
                                    edgecolors=node_border_color,
@@ -436,6 +442,7 @@ if st.button("Draw Graph"):
                                    node_size=node_size,
                                    ax=ax)
             
+            # Draw edges
             nx.draw_networkx_edges(G, pos,
                                    edge_color=edge_color,
                                    width=edge_width,
@@ -451,15 +458,22 @@ if st.button("Draw Graph"):
                                             font_family=font_family, # Apply global font family
                                             ax=ax)
             
-            # Add label background if enabled (matplotlib specific)
+            # Add node label background if enabled
             if label_bgcolor_enabled:
                 for _, text_obj in texts.items():
                     text_obj.set_bbox(dict(facecolor=label_bgcolor, edgecolor='none', boxstyle='round,pad=0.2'))
 
             # Draw edge labels (if enabled)
             if edge_labels_enabled:
-                edge_labels = {edge: f"({edge[0]},{edge[1]})" for edge in G.edges()} # Example labels
-                nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels,
+                # You can customize these labels based on your graph's properties if needed
+                # For a general algebraic graph, edge labels might just be coordinates or simple identifiers
+                edge_labels = {edge: f"" for edge in G.edges()} # Example: (node1,node2)
+                # If you want to show actual node names:
+                edge_labels_display = {}
+                for u,v in G.edges():
+                    edge_labels_display[(u,v)] = f"{u}-{v}" 
+
+                nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels_display,
                                              font_size=edge_label_font_size,
                                              font_color=edge_label_color,
                                              font_family=font_family, # Apply global font family
@@ -486,8 +500,9 @@ if st.button("Draw Graph"):
                 
                 # A larger padding factor might be needed for very large node labels or many nodes
                 # Use a larger factor for star graphs
-                padding_factor = 0.2 if is_star_graph else 0.15 # More padding for star graphs
-                dynamic_padding = max(range_x * padding_factor, range_y * padding_factor, 1.0) # 15-20% padding or minimum 1.0
+                # Increased padding again for very large star graphs (like 100 nodes)
+                padding_factor = 0.25 if is_star_graph else 0.18 # More padding for star graphs
+                dynamic_padding = max(range_x * padding_factor, range_y * padding_factor, 1.5) # Minimum 1.5 for very small graphs
                 
                 ax.set_xlim(min_x - dynamic_padding, max_x + dynamic_padding)
                 ax.set_ylim(min_y - dynamic_padding, max_y + dynamic_padding)
@@ -500,4 +515,5 @@ if st.button("Draw Graph"):
 # --- Footer ---
 st.markdown("---")
 st.info("💡 This app visualizes general simple graphs based on algebraic expressions. Self-loops (e.g., `A*A`) are **filtered** due to `A*A=A` idempotence. Absorption (`a*b*c + a*b = a*b*c`) is applied by the set-based union of generated clique edges.")
+
 
